@@ -1,0 +1,11 @@
+{
+  "name": "giysi-modu-tools",
+  "private": true,
+  "type": "module",
+  "description": "Tür denetimi için resmi Bedrock script API tanımları",
+  "devDependencies": {
+    "@minecraft/server": "2.11.0",
+    "@minecraft/server-ui": "2.3.0",
+    "typescript": "^5.9.3"
+  }
+}
