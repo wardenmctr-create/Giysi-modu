@@ -34,14 +34,33 @@ export function newId(prefix) {
   return `${prefix}${n.toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;
 }
 
-// Giysi verisi: { v, id, cat, shape, tpl, colors[], motifs[{i,f,x,y,c[]}], done }
+// Şablon sırası: 0..24 ortak şablonlar, 25 oyun içi çizim, 26.. Atölye yuvaları.
+export function templateName(tpl) {
+  if (tpl < DATA.TEMPLATES.length) return DATA.TEMPLATES[tpl].name;
+  if (tpl === DATA.DRAW_TEMPLATE) return "Çizim";
+  return `Atölye ${tpl - DATA.ATOLYE_TEMPLATE + 1}`;
+}
+
+export function templateRegions(tpl) {
+  return tpl < DATA.TEMPLATES.length ? DATA.TEMPLATES[tpl].regions : tpl === DATA.DRAW_TEMPLATE ? 1 : 0;
+}
+
+// Motif ölçeği: s (yüzde), şekillerde en w ve boy h ayrı; r açı (derece).
+export function normalizeMotif(m) {
+  const s = m.s ?? 100;
+  return { i: m.i, f: m.f ?? 0, x: m.x ?? 7, y: m.y ?? 7, c: m.c ?? [], s, w: m.w ?? s, h: m.h ?? s, r: m.r ?? 0 };
+}
+
+// Giysi verisi: { v, id, cat, shape, tpl, colors[], motifs[{i,f,x,y,c[],s,w,h,r}], draw?, done }
 export function readCloth(item) {
   if (!isCloth(item)) return undefined;
   const raw = item.getDynamicProperty(DATA_KEY);
   if (typeof raw !== "string") return undefined;
   try {
     const d = JSON.parse(raw);
-    return d && d.done ? d : undefined;
+    if (!d || !d.done) return undefined;
+    d.motifs = (d.motifs ?? []).map(normalizeMotif);
+    return d;
   } catch {
     return undefined;
   }
@@ -53,7 +72,7 @@ export function writeCloth(item, d) {
   const shape = DATA.SHAPES[d.cat][d.shape];
   item.nameTag = `§r${shape.name}`;
   item.setLore([
-    `§7${cat.name} · ${DATA.TEMPLATES[d.tpl].name}`,
+    `§7${cat.name} · ${templateName(d.tpl)}`,
     `§7Motif: ${d.motifs.length}/${DATA.LIMITS.maxMotifs}`,
   ]);
 }

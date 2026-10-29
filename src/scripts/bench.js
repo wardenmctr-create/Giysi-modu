@@ -1,34 +1,32 @@
-// Giysi tezgâhı: şekil, renk şablonu, boya hazneleri ve motif düzenleyici.
-// Malzemeler yalnızca "Tamamla" onayında tüketilir; iptal hiçbir şey tüketmez.
-import { system } from "@minecraft/server";
-import { ActionFormData, FormCancelationReason } from "@minecraft/server-ui";
+// Giysi tezgâhı: şekil, renk şablonu, boya hazneleri, motif düzenleyici ve oyun içi çizim.
+// "Kaydet"e basılana kadar hiçbir şey üretilmez ve tüketilmez; tasarım taslak olarak saklanır,
+// tezgâh kapanıp yeniden açılınca kalınan yerden devam edilir.
+import { system, InputPermissionCategory } from "@minecraft/server";
+import { ActionFormData, CustomForm, ObservableNumber, ObservableString, ObservableBoolean, FormCancelationReason } from "@minecraft/server-ui";
 import { DATA } from "./data.js";
 import {
   CAT_BY_BASE, CAT_BY_ITEM, DYE_ITEMS, isBase, isCloth, readCloth, writeCloth, createClothItem, newId, giveOrDrop,
+  templateName, templateRegions, normalizeMotif,
 } from "./cloth.js";
-import { syncPreview } from "./sync.js";
-import { getState, setSlim } from "./bags.js";
+import { syncPreview, endPreview } from "./sync.js";
+import { getState, setSlim, refreshSelf } from "./bags.js";
+import { clothSlotsFor, photoSlot } from "./atolye.js";
 
-const PREVIEW = "§g§m§r"; // server_form.json bu işareti görünce canlı önizlemeyi açar
+const DRAFT_KEY = "gm:taslak";
 const busy = new Set();
 const pad = (n) => String(n).padStart(2, "0");
-const dyeName = (i) => (i >= 0 ? DATA.DYES[i].name : "Boş (beyaz)");
-const dyeIcon = (i) => `textures/gm/ui/dye_${DATA.DYES[i].id}`;
+const RULE = DATA.MOTIF_RULES;
+const FIRST_PHOTO = DATA.MOTIFS.findIndex((m) => m.kind === "photo");
+const DRAW_CHARS = "0123456789abcdefg";
+// Metin ızgarasında boyaların yaklaşık § renkleri
+const DYE_TEXT = ["§f", "§6", "§d", "§b", "§e", "§a", "§d", "§8", "§7", "§3", "§5", "§9", "§n", "§2", "§c", "§0"];
 
-async function show(form, player) {
-  for (let i = 0; i < 20; i++) {
-    const r = await form.show(player);
-    if (r.cancelationReason !== FormCancelationReason.UserBusy) return r;
-    await new Promise((res) => system.runTimeout(() => res(undefined), 5));
-  }
-  return { canceled: true };
-}
-
+// ------------------------------------------------------------ yardımcılar
 function inventory(player) {
   return player.getComponent("minecraft:inventory")?.container;
 }
 
-function countDyes(player) {
+export function countDyes(player) {
   const inv = inventory(player);
   const counts = new Array(DATA.DYES.length).fill(0);
   if (!inv) return counts;
@@ -57,43 +55,196 @@ function consumeDyes(player, need) {
   }
 }
 
-function cost(sess) {
+const shapeOf = (sess) => DATA.SHAPES[sess.cat.id][sess.shape];
+
+// Boya maliyeti: dolu temel bölge, yeni motif kanalı, çizimde kullanılan her renk, Atölye tasarımının renkleri.
+export function cost(sess) {
   const need = new Array(DATA.DYES.length).fill(0);
-  if (sess.mode === "new") for (const c of sess.colors) if (c >= 0) need[c]++;
-  for (const m of sess.motifs) for (const c of m.c) if (c >= 0) need[c]++;
+  if (sess.mode === "new") {
+    for (const c of sess.colors) if (c >= 0) need[c]++;
+    if (sess.tpl === DATA.DRAW_TEMPLATE) {
+      for (const ch of new Set(sess.draw.replace(/0/g, ""))) need[parseInt(ch, 17) - 1]++;
+    }
+    if (sess.tpl >= DATA.ATOLYE_TEMPLATE) {
+      const slot = clothSlotsFor(sess.cat.id, sess.shape).find((k) => k.slot === sess.tpl - DATA.ATOLYE_TEMPLATE);
+      for (const d of slot?.boyalar ?? []) need[d]++;
+    }
+  }
+  for (const m of sess.motifs) {
+    if (m.i >= FIRST_PHOTO && FIRST_PHOTO >= 0) for (const d of photoSlot(m.i - FIRST_PHOTO)?.boyalar ?? []) need[d]++;
+    else for (const c of m.c) if (c >= 0) need[c]++;
+  }
   return need;
 }
 
 function design(sess) {
   return {
     cat: sess.cat.id, shape: sess.shape, tpl: sess.tpl, colors: sess.colors,
-    motifs: [...sess.existing, ...sess.motifs],
+    motifs: [...sess.existing, ...sess.motifs], draw: sess.draw,
   };
 }
 
-function preview(sess) {
-  syncPreview(sess.player, sess.cat.key, design(sess), sess.yaw);
+// Motif boyut sınırı: yüzeyden taşmasın (dönme açısıyla birlikte).
+export function motifLimits(sess, m) {
+  const md = DATA.MOTIFS[m.i];
+  const rule = RULE[md.kind];
+  const sh = shapeOf(sess);
+  const s = sh.surfaces[m.f];
+  const r = (m.r * Math.PI) / 180, ca = Math.abs(Math.cos(r)), sa = Math.abs(Math.sin(r));
+  const S0 = sh.motifSize;
+  const [lo, hi] = rule.scale;
+  if (rule.stretch) {
+    const ky = m.h / 100, kx = m.w / 100;
+    const wMax = Math.min(ca > 1e-6 ? (s.A / S0 - ky * sa) / ca : Infinity, sa > 1e-6 ? (s.B / S0 - ky * ca) / sa : Infinity);
+    const hMax = Math.min(sa > 1e-6 ? (s.A / S0 - kx * ca) / sa : Infinity, ca > 1e-6 ? (s.B / S0 - kx * sa) / ca : Infinity);
+    return { lo, wHi: Math.max(lo, Math.min(hi, Math.floor(wMax * 100))), hHi: Math.max(lo, Math.min(hi, Math.floor(hMax * 100))) };
+  }
+  const k = Math.min(s.A, s.B) / (S0 * (ca + sa));
+  return { lo, hi: Math.max(lo, Math.min(hi, Math.floor(k * 100))) };
 }
 
-function endPreview(sess) {
-  syncPreview(sess.player, sess.cat.key, null, 0);
+export function clampMotif(sess, m) {
+  const md = DATA.MOTIFS[m.i];
+  const L = motifLimits(sess, m);
+  const step = RULE[md.kind].rotStep;
+  m.r = (Math.round(m.r / step) * step + 360) % 360;
+  if (RULE[md.kind].stretch) {
+    m.w = Math.max(L.lo, Math.min(L.wHi, m.w));
+    m.h = Math.max(L.lo, Math.min(L.hHi, m.h));
+    m.s = m.w;
+  } else {
+    m.s = Math.max(L.lo, Math.min(L.hi, m.s));
+    m.w = m.h = m.s;
+  }
+  m.x = Math.max(0, Math.min(15, m.x));
+  m.y = Math.max(0, Math.min(15, m.y));
+}
+
+// ------------------------------------------------------------ taslak ve önizleme
+function saveDraft(sess) {
+  const d = { input: sess.input, mode: sess.mode, cat: sess.cat.id, shape: sess.shape, tpl: sess.tpl, colors: sess.colors, motifs: sess.motifs, draw: sess.draw };
+  try {
+    sess.player.setDynamicProperty(DRAFT_KEY, JSON.stringify(d));
+  } catch (e) {
+    console.warn(`[Giysi] taslak kaydedilemedi: ${e}`);
+  }
+}
+
+function loadDraft(player) {
+  try {
+    return JSON.parse(player.getDynamicProperty(DRAFT_KEY) ?? "null");
+  } catch {
+    return null;
+  }
+}
+
+function clearDraft(player) {
+  player.setDynamicProperty(DRAFT_KEY, undefined);
+}
+
+// Her değişiklikte bir sonraki tikte tek önizleme + taslak kaydı (kaydırıcılar art arda değer yollar).
+function touch(sess) {
+  if (sess.pending || sess.closed) return;
+  sess.pending = true;
+  system.run(() => {
+    sess.pending = false;
+    // Tezgâh kapandıysa bekleyen güncelleme kamerayı yeniden açmamalı ve silinen taslağı geri yazmamalı.
+    if (sess.closed || !sess.player.isValid) return;
+    const st = getState(sess.player);
+    syncPreview(sess.player, sess.cat.key, design(sess), st.data, st.slim, 0);
+    saveDraft(sess);
+    updateCamera(sess);
+  });
+}
+
+const FOCUS = { hat: [1.75, 2.1], top: [1.2, 2.6], pants: [0.7, 2.6], shoes: [0.25, 2.0] };
+function updateCamera(sess) {
+  const p = sess.player;
+  try {
+    const [h, dist] = FOCUS[sess.cat.id];
+    const yaw = ((sess.bodyYaw + sess.yaw) * Math.PI) / 180;
+    const o = sess.origin;
+    const location = { x: o.x - Math.sin(yaw) * dist, y: o.y + h + 0.3, z: o.z + Math.cos(yaw) * dist };
+    p.camera.setCamera("minecraft:free", { location, facingLocation: { x: o.x, y: o.y + h, z: o.z }, easeOptions: { easeTime: 0.25 } });
+  } catch {
+    // Kamera kullanılamıyorsa önizleme oyuncunun kendi görünümünde kalır.
+  }
+}
+
+function startPreview(sess) {
+  sess.origin = { ...sess.player.location };
+  sess.bodyYaw = sess.player.getRotation().y;
+  try {
+    sess.player.inputPermissions.setPermissionCategory(InputPermissionCategory.Movement, false);
+  } catch { /* isteğe bağlı */ }
+  touch(sess);
+}
+
+function stopPreview(sess) {
+  sess.closed = true;
+  const p = sess.player;
+  if (!p.isValid) return;
+  try { p.camera.clear(); } catch { /* isteğe bağlı */ }
+  try { p.inputPermissions.setPermissionCategory(InputPermissionCategory.Movement, true); } catch { /* isteğe bağlı */ }
+  endPreview(p);
+  refreshSelf(p);
 }
 
 // ------------------------------------------------------------ giriş haznesi
 export async function openBench(player) {
   if (busy.has(player.id)) return;
   busy.add(player.id);
+  let sess;
   try {
-    await inputMenu(player);
+    if (typeof CustomForm !== "function") {
+      player.sendMessage("§cBu oyun sürümü tezgâhın canlı ekranını (CustomForm) desteklemiyor.");
+      return;
+    }
+    sess = await inputMenu(player);
+    if (!sess) return;
+    startPreview(sess);
+    await editorLoop(sess);
   } catch (e) {
-    console.warn(`[Giysi] tezgâh hatası: ${e}\n${e.stack ?? ""}`);
+    console.warn(`[Giysi] tezgâh hatası: ${e}\n${e?.stack ?? ""}`);
   } finally {
+    if (sess) stopPreview(sess);
     busy.delete(player.id);
   }
 }
 
+async function showAction(form, player) {
+  for (let i = 0; i < 20; i++) {
+    const r = await form.show(player);
+    if (r.cancelationReason !== FormCancelationReason.UserBusy) return r;
+    await new Promise((res) => system.runTimeout(() => res(undefined), 5));
+  }
+  return { canceled: true };
+}
+
+function newSession(player, choice, draft) {
+  const inv = inventory(player);
+  if (choice.clothId) {
+    const d = readCloth(inv.getItem(choice.slot));
+    if (!d) return undefined;
+    const sess = {
+      player, mode: "motif", cat: DATA.CATEGORIES.find((c) => c.id === d.cat), input: choice,
+      shape: d.shape, tpl: d.tpl, colors: d.colors, existing: d.motifs, motifs: [], draw: d.draw ?? "", yaw: 0,
+    };
+    if (draft && draft.mode === "motif" && draft.input?.clothId === choice.clothId) sess.motifs = draft.motifs.map(normalizeMotif);
+    return sess;
+  }
+  const cat = DATA.CATEGORIES.find((c) => c.id === CAT_BY_BASE.get(choice.typeId).id);
+  const firstBuilt = DATA.SHAPES[cat.id].findIndex((s) => s.built >= 0);
+  const sess = { player, mode: "new", cat, input: choice, shape: firstBuilt, tpl: 0, colors: [-1], existing: [], motifs: [], draw: "", yaw: 0 };
+  if (draft && draft.mode === "new" && draft.cat === cat.id && DATA.SHAPES[cat.id][draft.shape]?.built >= 0) {
+    Object.assign(sess, { shape: draft.shape, tpl: draft.tpl, colors: draft.colors, motifs: draft.motifs.map(normalizeMotif), draw: draft.draw ?? "" });
+  }
+  return sess;
+}
+
 async function inputMenu(player) {
   const inv = inventory(player);
+  const draft = loadDraft(player);
   const choices = [];
   for (let i = 0; i < inv.size; i++) {
     const it = inv.getItem(i);
@@ -105,261 +256,336 @@ async function inputMenu(player) {
   }
   if (!choices.length) {
     player.sendMessage("§eTezgâha koymak için beyaz temel giysi veya tamamlanmış giysi gerekli.");
-    return;
+    return undefined;
   }
-  const f = new ActionFormData().title("Giysi Tezgâhı · Giriş haznesi").body("Tezgâha koyulacak giysiyi seç.");
-  for (const c of choices) {
+  // Taslağa ait giysi hâlâ envanterdeyse onu öne al.
+  let resume = -1;
+  if (draft) {
+    resume = choices.findIndex((c) => (draft.mode === "motif" ? c.clothId === draft.input?.clothId : !c.clothId && c.typeId === draft.input?.typeId));
+  }
+  const f = new ActionFormData().title("Giysi Tezgâhı · Giriş haznesi").body(resume >= 0 ? "Kaydedilmemiş bir taslağın var; üstteki düğmeyle devam edebilirsin." : "Tezgâha koyulacak giysiyi seç.");
+  const order = resume >= 0 ? [resume, ...choices.keys()].filter((v, i, a) => a.indexOf(v) === i) : [...choices.keys()];
+  for (const k of order) {
+    const c = choices[k];
     const cat = CAT_BY_BASE.get(c.typeId) ?? CAT_BY_ITEM.get(c.typeId);
-    f.button(c.label, `textures/gm/items/${cat.id}${c.clothId ? "" : "_base"}`);
+    f.button(k === resume ? `§2Taslağa devam: ${c.label}` : c.label, `textures/gm/items/${cat.id}${c.clothId ? "" : "_base"}`);
   }
-  const r = await show(f, player);
-  if (r.canceled) return;
-  const ch = choices[r.selection];
-  if (ch.clothId) {
-    const d = readCloth(inv.getItem(ch.slot));
-    if (!d) return;
-    const sess = {
-      player, mode: "motif", cat: DATA.CATEGORIES.find((c) => c.id === d.cat), input: ch,
-      shape: d.shape, tpl: d.tpl, colors: d.colors, existing: d.motifs, motifs: [], yaw: 0, step: 1, base: d,
-    };
-    return designLoop(sess);
-  }
-  const cat = CAT_BY_BASE.get(ch.typeId);
-  const sess = { player, mode: "new", cat: DATA.CATEGORIES.find((c) => c.id === cat.id), input: ch, existing: [], motifs: [], yaw: 0, step: 1 };
-  if (!(await shapeMenu(sess))) return;
-  return designLoop(sess);
+  const r = await showAction(f, player);
+  if (r.canceled) return undefined;
+  const k = order[r.selection];
+  return newSession(player, choices[k], k === resume ? draft : null);
 }
 
-async function shapeMenu(sess) {
-  const k = sess.cat.key;
+// ------------------------------------------------------------ ana ekran
+async function editorLoop(sess) {
   for (;;) {
-    const f = new ActionFormData().title(`${sess.cat.name} · Şekil`).body("Kategorinin 25 şekli. Kilitli olanlar doğrulama kapısından sonra üretilecek.");
-    DATA.SHAPES[sess.cat.id].forEach((s, i) => {
-      const style = s.style === "modern" ? "" : s.style === "fantastik" ? " §d(fantastik)" : " §6(ortaçağ)";
-      f.button(`${s.built >= 0 ? "" : "§8"}${s.name}${style}`, `textures/gm/ui/shape_${k}${pad(i + 1)}`);
-    });
-    const r = await show(f, sess.player);
-    if (r.canceled) return false;
-    const s = DATA.SHAPES[sess.cat.id][r.selection];
-    if (s.built < 0) {
-      sess.player.sendMessage(`§e"${s.name}" henüz üretilmedi: doğrulama kapısı geçmeden 100 modelin üretimine başlanmıyor.`);
-      continue;
-    }
-    sess.shape = r.selection;
-    if (await templateMenu(sess)) return true;
-  }
-}
-
-async function templateMenu(sess) {
-  const key = `${sess.cat.key}${pad(sess.shape + 1)}`;
-  const f = new ActionFormData().title(`${DATA.SHAPES[sess.cat.id][sess.shape].name} · Renk şablonu`).body("Örnek renkler bölgeleri birbirinden ayırır.");
-  DATA.TEMPLATES.forEach((t, i) => f.button(`${t.name} §8· ${t.regions} bölge`, `textures/gm/ui/tpl_${key}_${pad(i)}`));
-  const r = await show(f, sess.player);
-  if (r.canceled) return false;
-  sess.tpl = r.selection;
-  sess.colors = new Array(DATA.TEMPLATES[sess.tpl].regions).fill(-1);
-  return true;
-}
-
-// ------------------------------------------------------------ tasarım ekranı
-async function designLoop(sess) {
-  try {
-    for (;;) {
-      preview(sess);
-      const res = await designMenu(sess);
-      if (res === "done") return;
-      if (res === "cancel") {
-        sess.player.sendMessage("§7Tasarım iptal edildi; malzeme tüketilmedi.");
-        return;
-      }
-    }
-  } finally {
-    endPreview(sess);
-  }
-}
-
-async function designMenu(sess) {
-  const p = sess.player;
-  const st = getState(p);
-  const have = countDyes(p);
-  const need = cost(sess);
-  const shape = DATA.SHAPES[sess.cat.id][sess.shape];
-  const lines = [
-    `§l${shape.name}§r · ${DATA.TEMPLATES[sess.tpl].name}`,
-    sess.mode === "motif" ? "§6Tamamlanmış giysi: yalnızca yeni motif eklenebilir." : "Hazneye dokunup envanterden boya seç.",
-    `Motif: ${sess.existing.length + sess.motifs.length}/${DATA.LIMITS.maxMotifs}`,
-  ];
-  const costLine = need.map((n, i) => (n ? `${n > have[i] ? "§c" : "§a"}${DATA.DYES[i].name} ${n}/${have[i]}§r` : "")).filter(Boolean);
-  lines.push(costLine.length ? `Gereken boya: ${costLine.join(", ")}` : "Gereken boya: yok");
-  const f = new ActionFormData().title(`${PREVIEW}Giysi Tezgâhı`).body(lines.join("\n"));
-  const actions = [];
-  if (sess.mode === "new") {
-    sess.colors.forEach((c, r) => {
-      f.button(`Bölge ${r + 1}: ${dyeName(c)}`, c >= 0 ? dyeIcon(c) : "textures/gm/ui/dye_white");
-      actions.push(["region", r]);
-    });
-  }
-  f.button("§2Motif düzenleyici", "textures/gm/ui/btn_motif"); actions.push(["motif"]);
-  f.button("Önizlemeyi döndür", "textures/gm/ui/btn_rotate"); actions.push(["rotate"]);
-  f.button(`Kol tipi: ${st.slim ? "İnce" : "Standart"}`); actions.push(["slim"]);
-  f.button("§aTamamla", "textures/gm/ui/btn_done"); actions.push(["done"]);
-  f.button("§cİptal", "textures/gm/ui/btn_cancel"); actions.push(["cancel"]);
-  const r = await show(f, p);
-  if (r.canceled) return "cancel";
-  const [act, arg] = actions[r.selection];
-  switch (act) {
-    case "region": {
-      const d = await dyePicker(sess, `Bölge ${arg + 1}`, true);
-      if (d !== undefined) sess.colors[arg] = d;
+    const act = await mainScreen(sess);
+    if (act === "motifs") await motifList(sess);
+    else if (act === "draw") await drawScreen(sess);
+    else if (act === "save") {
+      if (complete(sess)) return;
+    } else if (act === "discard") {
+      clearDraft(sess.player);
+      sess.player.sendMessage("§7Taslak silindi; malzeme tüketilmedi.");
+      return;
+    } else {
+      saveDraft(sess);
+      sess.player.sendMessage("§7Tasarım taslak olarak saklandı. Kaydet'e basmadan giysi üretilmez.");
       return;
     }
-    case "motif":
-      return motifEditor(sess);
-    case "rotate":
-      sess.yaw = (sess.yaw + 45) % 360;
-      return;
-    case "slim":
-      setSlim(p, !st.slim);
-      return;
-    case "done":
-      return complete(sess) ? "done" : undefined;
-    case "cancel":
-      return "cancel";
   }
 }
 
-// allowEmpty: boş bırakılan temel bölge beyaz kalır. Dönüş: boya sırası, -1 (boş) veya undefined (vazgeç).
-async function dyePicker(sess, title, allowEmpty) {
+function templateChoices(sess) {
+  const list = DATA.TEMPLATES.map((t, i) => ({ tpl: i, label: `${t.name} · ${t.regions} bölge` }));
+  if (shapeOf(sess).draw) list.push({ tpl: DATA.DRAW_TEMPLATE, label: "Çizim (oyun içi fırça)" });
+  for (const k of clothSlotsFor(sess.cat.id, sess.shape)) list.push({ tpl: DATA.ATOLYE_TEMPLATE + k.slot, label: `Atölye: ${k.ad}` });
+  return list;
+}
+
+function statusText(sess) {
   const have = countDyes(sess.player);
-  const f = new ActionFormData().title(`${PREVIEW}${title} · Boya`).body("Envanterdeki boyalar. Aynı renk birden çok haznede kullanılabilir.");
-  const opts = [];
-  if (allowEmpty) {
-    f.button("Boş bırak (beyaz)");
-    opts.push(-1);
+  const need = cost(sess);
+  const parts = need.map((n, i) => (n ? `${n > have[i] ? "§c" : "§a"}${DATA.DYES[i].name} ${n}/${have[i]}§r` : "")).filter(Boolean);
+  const total = sess.existing.length + sess.motifs.length;
+  return [
+    `§l${shapeOf(sess).name}§r · ${templateName(sess.tpl)} · Motif ${total}/${DATA.LIMITS.maxMotifs}`,
+    sess.mode === "motif" ? "§6Tamamlanmış giysi: yalnızca yeni motif eklenebilir." : "Bölgelere boya seç; boş bölgeler beyaz kalır.",
+    parts.length ? `Gereken boya: ${parts.join(", ")}` : "Gereken boya: yok",
+    "§7Kaydet'e basana kadar hiçbir şey üretilmez veya tüketilmez.",
+  ].join("\n");
+}
+
+function dyeItems(have, emptyLabel) {
+  const items = [];
+  if (emptyLabel) items.push({ label: emptyLabel, value: 0 });
+  DATA.DYES.forEach((d, i) => items.push({ label: `${d.name} (${have[i]})`, value: items.length }));
+  return items;
+}
+
+async function mainScreen(sess) {
+  const p = sess.player;
+  const f = new CustomForm(p, "Giysi Tezgâhı");
+  let action = "close";
+  const have = countDyes(p);
+  const status = new ObservableString(statusText(sess));
+  const refresh = () => { status.setData(statusText(sess)); touch(sess); };
+  f.label(status);
+  const editable = sess.mode === "new";
+
+  // Şekil
+  const shapes = DATA.SHAPES[sess.cat.id];
+  const shapeObs = new ObservableNumber(sess.shape, { clientWritable: true });
+  f.dropdown("Şekil", shapeObs, shapes.map((s, i) => ({ label: s.built >= 0 ? s.name : `§8${s.name} (kapı testinden sonra)`, value: i })), { disabled: !editable });
+
+  // Şablon (+ çizim ve Atölye)
+  let tplList = templateChoices(sess);
+  const tplObs = new ObservableNumber(Math.max(0, tplList.findIndex((t) => t.tpl === sess.tpl)), { clientWritable: true });
+  f.dropdown("Renk şablonu", tplObs, tplList.map((t, i) => ({ label: t.label, value: i })), { disabled: !editable });
+
+  // Boya hazneleri
+  const regionObs = [], regionVis = [];
+  for (let r = 0; r < DATA.LIMITS.maxRegions; r++) {
+    regionObs.push(new ObservableNumber((sess.colors[r] ?? -1) + 1, { clientWritable: true }));
+    regionVis.push(new ObservableBoolean(r < sess.colors.length));
+    f.dropdown(`Bölge ${r + 1}`, regionObs[r], dyeItems(have, "Boş (beyaz)"), { visible: regionVis[r], disabled: !editable });
   }
-  have.forEach((n, i) => {
-    if (n > 0) {
-      f.button(`${DATA.DYES[i].name} §8×${n}`, dyeIcon(i));
-      opts.push(i);
+  const drawVis = new ObservableBoolean(sess.tpl === DATA.DRAW_TEMPLATE && editable);
+  const setRegions = () => {
+    const n = templateRegions(sess.tpl);
+    const next = [];
+    for (let r = 0; r < n; r++) next.push(sess.colors[r] ?? -1);
+    sess.colors = next;
+    regionVis.forEach((v, r) => v.setData(r < n));
+  };
+
+  shapeObs.subscribe((v) => {
+    if (!editable || v === sess.shape) return;
+    if (shapes[v]?.built < 0) {
+      shapeObs.setData(sess.shape);
+      status.setData(`§e"${shapes[v].name}" henüz üretilmedi: kapı testi geçmeden 100 modelin üretimine başlanmıyor.\n` + statusText(sess));
+      return;
     }
+    sess.shape = v;
+    sess.motifs.forEach((m) => { m.f = Math.min(m.f, shapeOf(sess).surfaces.length - 1); clampMotif(sess, m); });
+    tplList = templateChoices(sess);
+    if (!tplList.some((t) => t.tpl === sess.tpl)) { sess.tpl = 0; tplObs.setData(0); setRegions(); }
+    refresh();
   });
-  if (!opts.length || (allowEmpty && opts.length === 1)) f.body("§eEnvanterde boya yok.");
-  const r = await show(f, sess.player);
-  if (r.canceled) return undefined;
-  return opts[r.selection];
+  tplObs.subscribe((v) => {
+    if (!editable || !tplList[v] || tplList[v].tpl === sess.tpl) return;
+    sess.tpl = tplList[v].tpl;
+    setRegions();
+    drawVis.setData(sess.tpl === DATA.DRAW_TEMPLATE);
+    refresh();
+  });
+  regionObs.forEach((o, r) => o.subscribe((v) => {
+    if (!editable || r >= sess.colors.length) return;
+    sess.colors[r] = v - 1;
+    refresh();
+  }));
+
+  f.button("§2Motif düzenleyici", () => { action = "motifs"; f.close(); });
+  f.button("Çizim fırçası", () => { action = "draw"; f.close(); }, { visible: drawVis });
+
+  const yawObs = new ObservableNumber(sess.yaw, { clientWritable: true });
+  f.slider("Önizlemeyi döndür", yawObs, 0, 345, { step: 15 });
+  yawObs.subscribe((v) => { sess.yaw = v; touch(sess); });
+  const slimObs = new ObservableBoolean(!!getState(p).slim, { clientWritable: true });
+  f.toggle("İnce kol (skinin kolları inceyse)", slimObs);
+  slimObs.subscribe((v) => { setSlim(p, v); touch(sess); });
+
+  f.button("§aKaydet ve üret", () => { action = "save"; f.close(); });
+  f.button("§cTaslağı sil", () => { action = "discard"; f.close(); });
+  f.closeButton();
+  await f.show();
+  return action;
 }
 
-// ------------------------------------------------------------ motif düzenleyici
-async function motifEditor(sess) {
+// ------------------------------------------------------------ motifler
+async function motifList(sess) {
   for (;;) {
-    preview(sess);
+    const p = sess.player;
+    const f = new CustomForm(p, "Motif düzenleyici");
+    /** @type {{ back?: boolean, add?: boolean, edit?: number }} */
+    let act = { back: true };
     const total = sess.existing.length + sess.motifs.length;
-    const f = new ActionFormData().title(`${PREVIEW}Motif düzenleyici`)
-      .body(`Motif: ${total}/${DATA.LIMITS.maxMotifs}. Boyut ve açı sabit; yalnızca konum değişir.${sess.existing.length ? `\n§7${sess.existing.length} mevcut motif değiştirilemez.` : ""}`);
-    const acts = [];
+    f.label(`Motif: ${total}/${DATA.LIMITS.maxMotifs}. Konum her motifte kaydırılır; uygun motiflerde boyut ve açı da değişir.${sess.existing.length ? `\n§7${sess.existing.length} mevcut motif değiştirilemez.` : ""}`);
     sess.motifs.forEach((m, i) => {
-      f.button(`${DATA.MOTIFS[m.i].name} §8· ${surfaceName(sess, m.f)}`, `textures/gm/ui/motif_${DATA.MOTIFS[m.i].id}`);
-      acts.push(["edit", i]);
+      const md = DATA.MOTIFS[m.i];
+      const size = RULE[md.kind].stretch ? `%${m.w}×${m.h}` : `%${m.s}`;
+      f.button(`${md.name} · ${shapeOf(sess).surfaces[m.f].name} · ${size} · ${m.r}°`, () => { act = { edit: i }; f.close(); });
     });
-    if (total < DATA.LIMITS.maxMotifs) {
-      f.button("§2Yeni motif ekle", "textures/gm/ui/btn_motif");
-      acts.push(["add"]);
+    f.button("§2Yeni motif ekle", () => { act = { add: true }; f.close(); }, { disabled: total >= DATA.LIMITS.maxMotifs });
+    f.button("Geri", () => { act = { back: true }; f.close(); });
+    f.closeButton();
+    await f.show();
+    if (act.back) return;
+    if (act.add) {
+      const i = await motifPicker(sess);
+      if (i === undefined) continue;
+      const md = DATA.MOTIFS[i];
+      const m = { i, f: 0, x: 7, y: 7, s: 100, w: 100, h: 100, r: 0, c: Array.from({ length: md.ch }, (_, k) => [14, 0, 4][k]) };
+      clampMotif(sess, m);
+      sess.motifs.push(m);
+      touch(sess);
+      await motifEdit(sess, sess.motifs.length - 1);
     }
-    f.button("Geri");
-    acts.push(["back"]);
-    const r = await show(f, sess.player);
-    if (r.canceled) return;
-    const [act, arg] = acts[r.selection];
-    if (act === "back") return;
-    if (act === "edit") await motifEdit(sess, arg);
-    if (act === "add") {
-      const m = await newMotif(sess);
-      if (m) {
-        sess.motifs.push(m);
-        await motifEdit(sess, sess.motifs.length - 1);
-      }
-    }
+    if (act.edit !== undefined) await motifEdit(sess, act.edit);
   }
 }
 
-function surfaceName(sess, f) {
-  return DATA.SHAPES[sess.cat.id][sess.shape].surfaces[f] ?? "?";
-}
-
-async function newMotif(sess) {
-  const f = new ActionFormData().title("Motif seç").body("Her renk kanalı bir boya tüketir.");
-  DATA.MOTIFS.forEach((m) => f.button(`${m.name} §8· ${m.ch} renk`, `textures/gm/ui/motif_${m.id}`));
-  const r = await show(f, sess.player);
-  if (r.canceled) return undefined;
-  const mi = r.selection;
-  const c = [];
-  for (let ch = 0; ch < DATA.MOTIFS[mi].ch; ch++) {
-    const d = await dyePicker(sess, `${DATA.MOTIFS[mi].name} · renk ${ch + 1}`, false);
-    if (d === undefined || d < 0) return undefined;
-    c.push(d);
+const GROUPS = [["pixel", "Minecraft ve piksel"], ["vector", "Vektör (büyür, döner)"], ["shape", "Ayarlanabilir şekiller"], ["photo", "Foto (Atölye)"]];
+async function motifPicker(sess) {
+  const p = sess.player;
+  const g = new ActionFormData().title("Motif grubu").body("Her renk kanalı bir boya tüketir.");
+  GROUPS.forEach(([, n]) => g.button(n));
+  const rg = await showAction(g, p);
+  if (rg.canceled) return undefined;
+  const kind = GROUPS[rg.selection][0];
+  const items = DATA.MOTIFS.map((m, i) => ({ m, i })).filter(({ m, i }) => m.kind === kind && (kind !== "photo" || photoSlot(i - FIRST_PHOTO)));
+  if (!items.length) {
+    p.sendMessage(kind === "photo" ? "§eHenüz Atölye fotoğrafı yok. Atölye sayfasında foto hazırlayıp paketi dünyaya ekle." : "§eBu grupta motif yok.");
+    return undefined;
   }
-  const fs = await surfacePicker(sess);
-  if (fs === undefined) return undefined;
-  return { i: mi, f: fs, x: 7, y: 7, c };
-}
-
-async function surfacePicker(sess) {
-  const names = DATA.SHAPES[sess.cat.id][sess.shape].surfaces;
-  const f = new ActionFormData().title("Yüzey seç").body("Motifin yerleştirileceği giysi yüzeyi.");
-  names.forEach((n) => f.button(n));
-  const r = await show(f, sess.player);
-  return r.canceled ? undefined : r.selection;
+  const f = new ActionFormData().title(GROUPS[rg.selection][1]).body("Bir motif seç.");
+  for (const { m, i } of items) {
+    const label = kind === "photo" ? photoSlot(i - FIRST_PHOTO).ad : `${m.name} §8· ${m.ch} renk`;
+    f.button(label, `textures/gm/ui/motif_${m.id}`);
+  }
+  const r = await showAction(f, p);
+  return r.canceled ? undefined : items[r.selection].i;
 }
 
 async function motifEdit(sess, idx) {
-  for (;;) {
-    const m = sess.motifs[idx];
-    if (!m) return;
-    preview(sess);
-    const f = new ActionFormData().title(`${PREVIEW}${DATA.MOTIFS[m.i].name}`)
-      .body(`Yüzey: ${surfaceName(sess, m.f)} · Konum ${m.x + 1},${m.y + 1} / 16 · Adım ${sess.step}`);
-    const acts = [["l"], ["r"], ["u"], ["d"], ["step"], ["color"], ["surface"], ["del"], ["ok"]];
-    f.button("Sola", "textures/gm/ui/btn_left");
-    f.button("Sağa", "textures/gm/ui/btn_right");
-    f.button("Yukarı", "textures/gm/ui/btn_up");
-    f.button("Aşağı", "textures/gm/ui/btn_down");
-    f.button(`Adım: ${sess.step === 1 ? "1 → 4" : "4 → 1"}`);
-    f.button("Renkleri değiştir");
-    f.button("Yüzeyi değiştir");
-    f.button("§cMotifi kaldır", "textures/gm/ui/btn_cancel");
-    f.button("§aTamam", "textures/gm/ui/btn_done");
-    const r = await show(f, sess.player);
-    if (r.canceled) return;
-    const max = DATA.LIMITS.motifPos - 1;
-    const clamp = (v) => Math.max(0, Math.min(max, v));
-    switch (acts[r.selection][0]) {
-      case "l": m.x = clamp(m.x - sess.step); break;
-      case "r": m.x = clamp(m.x + sess.step); break;
-      case "u": m.y = clamp(m.y - sess.step); break;
-      case "d": m.y = clamp(m.y + sess.step); break;
-      case "step": sess.step = sess.step === 1 ? 4 : 1; break;
-      case "color": {
-        const c = [];
-        for (let ch = 0; ch < DATA.MOTIFS[m.i].ch; ch++) {
-          const d = await dyePicker(sess, `${DATA.MOTIFS[m.i].name} · renk ${ch + 1}`, false);
-          if (d === undefined || d < 0) break;
-          c.push(d);
-        }
-        if (c.length === DATA.MOTIFS[m.i].ch) m.c = c;
-        break;
-      }
-      case "surface": {
-        const s = await surfacePicker(sess);
-        if (s !== undefined) m.f = s;
-        break;
-      }
-      case "del": sess.motifs.splice(idx, 1); return;
-      case "ok": return;
+  const m = sess.motifs[idx];
+  if (!m) return;
+  const md = DATA.MOTIFS[m.i];
+  const rule = RULE[md.kind];
+  const p = sess.player;
+  const have = countDyes(p);
+  const f = new CustomForm(p, md.name);
+  let removed = false;
+  const sh = shapeOf(sess);
+  const info = new ObservableString("");
+  const L0 = motifLimits(sess, m);
+  const surfObs = new ObservableNumber(m.f, { clientWritable: true });
+  const xObs = new ObservableNumber(m.x + 1, { clientWritable: true });
+  const yObs = new ObservableNumber(m.y + 1, { clientWritable: true });
+  const sObs = new ObservableNumber(m.s, { clientWritable: true });
+  const wObs = new ObservableNumber(m.w, { clientWritable: true });
+  const hObs = new ObservableNumber(m.h, { clientWritable: true });
+  const rObs = new ObservableNumber(m.r, { clientWritable: true });
+  const sMax = new ObservableNumber(L0.hi ?? rule.scale[1]);
+  const wMax = new ObservableNumber(L0.wHi ?? rule.scale[1]);
+  const hMax = new ObservableNumber(L0.hHi ?? rule.scale[1]);
+  const update = () => {
+    clampMotif(sess, m);
+    const L = motifLimits(sess, m);
+    if (rule.stretch) { wMax.setData(L.wHi); hMax.setData(L.hHi); if (wObs.getData() !== m.w) wObs.setData(m.w); if (hObs.getData() !== m.h) hObs.setData(m.h); }
+    else { sMax.setData(L.hi); if (sObs.getData() !== m.s) sObs.setData(m.s); }
+    info.setData(rule.stretch ? `En en çok %${L.wHi}, boy en çok %${L.hHi} (bu yüzeyde ve açıda).` : `Boyut en çok %${L.hi} (bu yüzeyde ve açıda).`);
+    touch(sess);
+  };
+  f.label(info);
+  f.dropdown("Yüzey", surfObs, sh.surfaces.map((s, i) => ({ label: s.name, value: i })));
+  f.slider("Sağa / sola", xObs, 1, 16, { step: 1 });
+  f.slider("Yukarı / aşağı", yObs, 1, 16, { step: 1 });
+  if (rule.stretch) {
+    f.slider("En (%)", wObs, rule.scale[0], wMax, { step: rule.scaleStep });
+    f.slider("Boy (%)", hObs, rule.scale[0], hMax, { step: rule.scaleStep });
+  } else {
+    f.slider("Boyut (%)", sObs, rule.scale[0], sMax, { step: rule.scaleStep });
+  }
+  f.slider(rule.rotStep === 90 ? "Açı (90° adım)" : "Açı", rObs, 0, 360 - rule.rotStep, { step: rule.rotStep });
+  const chObs = [];
+  if (md.kind !== "photo") {
+    for (let ch = 0; ch < md.ch; ch++) {
+      const o = new ObservableNumber(m.c[ch] ?? 0, { clientWritable: true });
+      chObs.push(o);
+      f.dropdown(`Renk ${ch + 1}`, o, dyeItems(have, null));
+      o.subscribe((v) => { m.c[ch] = v; touch(sess); });
     }
+  }
+  surfObs.subscribe((v) => { m.f = v; update(); });
+  xObs.subscribe((v) => { m.x = v - 1; touch(sess); });
+  yObs.subscribe((v) => { m.y = v - 1; touch(sess); });
+  sObs.subscribe((v) => { if (v !== m.s) { m.s = v; update(); } });
+  wObs.subscribe((v) => { if (v !== m.w) { m.w = v; update(); } });
+  hObs.subscribe((v) => { if (v !== m.h) { m.h = v; update(); } });
+  rObs.subscribe((v) => { if (v !== m.r) { m.r = v; update(); } });
+  f.button("§cMotifi kaldır", () => { removed = true; f.close(); });
+  f.button("§aTamam", () => f.close());
+  f.closeButton();
+  update();
+  await f.show();
+  if (removed) {
+    sess.motifs.splice(idx, 1);
+    touch(sess);
   }
 }
 
-// ------------------------------------------------------------ tamamla
+// ------------------------------------------------------------ oyun içi çizim
+function drawGrid(sess, face, cur, size) {
+  const cells = shapeOf(sess).draw;
+  const lines = [];
+  for (let row = 0; row < 12; row++) {
+    let line = "";
+    for (let col = 0; col < 8; col++) {
+      const n = cells.findIndex((c) => c[0] === face && c[1] === row && c[2] === col);
+      const inBrush = row >= cur.row && row < cur.row + size && col >= cur.col && col < cur.col + size;
+      if (n < 0) { line += "§8 ·"; continue; }
+      const v = parseInt(sess.draw[n] ?? "0", 17) || 0;
+      const glyph = inBrush ? "▣" : "█";
+      line += v ? `${DYE_TEXT[v - 1]}${glyph}` : inBrush ? "§f▣" : "§7░";
+    }
+    lines.push(line + "§r");
+  }
+  return lines.join("\n");
+}
+
+function paint(sess, face, cur, size, value) {
+  const cells = shapeOf(sess).draw;
+  const arr = [...(sess.draw.padEnd(cells.length, "0"))];
+  cells.forEach((c, n) => {
+    if (c[0] === face && c[1] >= cur.row && c[1] < cur.row + size && c[2] >= cur.col && c[2] < cur.col + size) arr[n] = DRAW_CHARS[value];
+  });
+  sess.draw = arr.join("");
+  touch(sess);
+}
+
+async function drawScreen(sess) {
+  const p = sess.player;
+  if (!shapeOf(sess).draw) return;
+  const have = countDyes(p);
+  const f = new CustomForm(p, "Çizim fırçası");
+  const faceObs = new ObservableNumber(0, { clientWritable: true });
+  const colObs = new ObservableNumber(1, { clientWritable: true });
+  const rowObs = new ObservableNumber(1, { clientWritable: true });
+  const colorObs = new ObservableNumber(14, { clientWritable: true });
+  const sizeObs = new ObservableNumber(0, { clientWritable: true });
+  const grid = new ObservableString("");
+  const cur = () => ({ row: rowObs.getData() - 1, col: colObs.getData() - 1 });
+  const redraw = () => grid.setData(drawGrid(sess, faceObs.getData(), cur(), sizeObs.getData() + 1));
+  f.label("Skin pikseli çözünürlüğünde (gövde önü 8×12) çizim. Her farklı renk bir boya tüketir.");
+  f.dropdown("Yüz", faceObs, [{ label: "Ön", value: 0 }, { label: "Arka", value: 1 }]);
+  f.label(grid);
+  f.slider("Sütun", colObs, 1, 8, { step: 1 });
+  f.slider("Satır", rowObs, 1, 12, { step: 1 });
+  f.dropdown("Fırça rengi", colorObs, dyeItems(have, null));
+  f.dropdown("Fırça boyu", sizeObs, [{ label: "1×1", value: 0 }, { label: "2×2", value: 1 }, { label: "3×3", value: 2 }]);
+  for (const o of [faceObs, colObs, rowObs, sizeObs]) o.subscribe(() => system.run(redraw));
+  f.button("§2Boya", () => { paint(sess, faceObs.getData(), cur(), sizeObs.getData() + 1, colorObs.getData() + 1); redraw(); });
+  f.button("Sil", () => { paint(sess, faceObs.getData(), cur(), sizeObs.getData() + 1, 0); redraw(); });
+  f.button("Bu yüzü tümüyle boya", () => { paint(sess, faceObs.getData(), { row: 0, col: 0 }, 12, colorObs.getData() + 1); redraw(); });
+  f.button("Bu yüzü temizle", () => { paint(sess, faceObs.getData(), { row: 0, col: 0 }, 12, 0); redraw(); });
+  f.button("Geri", () => f.close());
+  f.closeButton();
+  redraw();
+  await f.show();
+}
+
+// ------------------------------------------------------------ kaydet
 function findInput(sess) {
   const inv = inventory(sess.player);
   const match = (it) => {
@@ -372,7 +598,7 @@ function findInput(sess) {
   return -1;
 }
 
-function complete(sess) {
+export function complete(sess) {
   const p = sess.player;
   if (sess.mode === "motif" && !sess.motifs.length) {
     p.sendMessage("§eEklenecek yeni motif yok.");
@@ -399,8 +625,8 @@ function complete(sess) {
       inv.setItem(slot, it);
     } else inv.setItem(slot, undefined);
     const d = {
-      v: 1, id: newId("c"), cat: sess.cat.id, shape: sess.shape, tpl: sess.tpl,
-      colors: sess.colors, motifs: sess.motifs, done: true,
+      v: 2, id: newId("c"), cat: sess.cat.id, shape: sess.shape, tpl: sess.tpl, colors: sess.colors,
+      motifs: sess.motifs, draw: sess.tpl === DATA.DRAW_TEMPLATE ? sess.draw : undefined, done: true,
     };
     giveOrDrop(p, createClothItem(d));
   } else {
@@ -409,7 +635,8 @@ function complete(sess) {
     writeCloth(it, d);
     inv.setItem(slot, it);
   }
-  p.sendMessage("§aGiysi tamamlandı.");
+  clearDraft(p);
+  p.sendMessage("§aGiysi kaydedildi ve üretildi.");
   return true;
 }
 

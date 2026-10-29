@@ -11,16 +11,14 @@ export const SAMPLE = [
 
 // texelList: { p:[x,y,z], face, color } — yalnızca kameraya bakan yüzler çizilir.
 export function renderIso(texelList, size = 64, bbox) {
-  const yaw = (-35 * Math.PI) / 180;
-  const pitch = (28 * Math.PI) / 180;
+  const yaw = (30 * Math.PI) / 180;
+  const pitch = (20 * Math.PI) / 180;
   const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
   const proj = ([x, y, z]) => {
-    // Kamera önden (−Z), biraz yukarıdan ve sağ yandan bakar.
+    // Kamera önden (−Z), giyenin sağ yanına (−X) kaymış ve yukarıdan bakar; ekran sağı +X (Bedrock aynalaması).
     const X = x * cy - z * sy;
-    const Z0 = x * sy + z * cy;
-    const Y = y * cp + Z0 * sp;
-    const D = -Z0 * cp + y * sp;
-    return [X, Y, D];
+    const Z1 = x * sy + z * cy;
+    return [X, y * cp + Z1 * sp, -y * sp + Z1 * cp];
   };
   const visible = new Set(["up", "north", "east"]);
   const pts = texelList.filter((t) => visible.has(t.face)).map((t) => ({ ...t, q: proj(t.p) }));

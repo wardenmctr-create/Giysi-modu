@@ -4,20 +4,23 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { CATEGORIES, SHAPES, TEMPLATES, MOTIFS, DYES, SETS, LIMITS, validateCatalog } from "./catalog.mjs";
+import { CATEGORIES, SHAPES, TEMPLATES, MOTIFS, MOTIF_RULES, ATOLYE, DYES, SETS, LIMITS, validateCatalog } from "./catalog.mjs";
 import { MOTIF_ART } from "./motif_art.mjs";
-import { PROTO_SHAPES, MOTIF_SIZE } from "./gen/shapes_proto.mjs";
+import { PROTO_SHAPES } from "./gen/shapes_proto.mjs";
 import { TEMPLATE_FN } from "./gen/templates.mjs";
-import { layoutGarment, texels, buildGeometry, TEX } from "./gen/garment.mjs";
-import { buildRender, patchPlayerEntity } from "./gen/render.mjs";
+import { VECTOR_MOTIFS, rasterize } from "./gen/vector_motifs.mjs";
+import { layoutGarment, texels, buildGeometry, partBoneName, hideKeys, TEX, MOTIF_BASE, MOTIF_STEP } from "./gen/garment.mjs";
+import { detect } from "./gen/zfight.mjs";
+import { buildRender, patchPlayerEntity, DRAW_TEMPLATE, ATOLYE_TEMPLATE } from "./gen/render.mjs";
 import { renderIso, lockedIcon, pixelIcon, SAMPLE } from "./gen/icons.mjs";
 import { Canvas, shade } from "./lib/png.mjs";
+import { noise, hash2 } from "./gen/fabric.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = path.join(ROOT, "build");
 const BP = path.join(OUT, "GiysiModu_BP");
 const RP = path.join(OUT, "GiysiModu_RP");
-const VERSION = [0, 1, 0];
+const VERSION = [0, 2, 0];
 const MIN_ENGINE = [1, 26, 0];
 const ITEM_FMT = "1.21.90";
 const UUID = {
@@ -39,15 +42,24 @@ function write(base, rel, data) {
   fileCount++;
 }
 const png = (base, rel, cv) => write(base, rel + ".png", cv.toPNG());
+const pad2 = (n) => String(n).padStart(2, "0");
+
+// Önizleme sayfası için toplanan veri (tools/preview.mjs kullanır).
+const preview = { garments: [], motifs: [], dyes: DYES, templates: TEMPLATES.map((t) => ({ id: t.id, name: t.name, regions: t.regions })) };
+const dataURI = (cv) => "data:image/png;base64," + cv.toPNG().toString("base64");
 
 // ---------------------------------------------------------------- doğrulama
 const errs = validateCatalog();
 for (const m of MOTIFS) {
-  const art = MOTIF_ART[m.id];
-  if (!art) { errs.push(`motif çizimi yok: ${m.id}`); continue; }
-  if (art.length !== 12 || art.some((r) => r.length !== 12)) errs.push(`motif ${m.id}: 12×12 değil`);
-  const used = new Set(art.join("").replace(/\./g, ""));
-  if (used.size !== m.ch) errs.push(`motif ${m.id}: ${used.size} kanal çizilmiş, katalogda ${m.ch}`);
+  if (m.kind === "pixel") {
+    const art = MOTIF_ART[m.id];
+    if (!art) { errs.push(`motif çizimi yok: ${m.id}`); continue; }
+    if (art.length !== 12 || art.some((r) => r.length !== 12)) errs.push(`motif ${m.id}: 12×12 değil`);
+    const used = new Set(art.join("").replace(/\./g, ""));
+    if (used.size !== m.ch) errs.push(`motif ${m.id}: ${used.size} kanal çizilmiş, katalogda ${m.ch}`);
+  } else if (m.kind === "vector" || m.kind === "shape") {
+    if (!VECTOR_MOTIFS[m.id]) errs.push(`vektör motif yok: ${m.id}`);
+  }
 }
 for (const t of TEMPLATES) if (!TEMPLATE_FN[t.id]) errs.push(`şablon fonksiyonu yok: ${t.id}`);
 if (errs.length) {
@@ -59,17 +71,20 @@ fs.rmSync(OUT, { recursive: true, force: true });
 
 // ---------------------------------------------------------------- giysiler
 const built = {};
-const builtIndex = {};
 const shapeData = {};
-const BASE_WHITE = 0xf2f2f2;
+const defsForCheck = [];
+const WHITE = 0xf4f4f4;
+const gray = (s) => {
+  const g = Math.max(0, Math.min(255, Math.round(242 * (1 + s))));
+  return (g << 16) | (g << 8) | g;
+};
 
 for (const cat of CATEGORIES) {
   built[cat.id] = [];
-  builtIndex[cat.id] = SHAPES[cat.id].map(() => -1);
   shapeData[cat.id] = [];
   SHAPES[cat.id].forEach((shape, si) => {
     const gen = PROTO_SHAPES[cat.id][si];
-    const nn = String(si + 1).padStart(2, "0");
+    const nn = pad2(si + 1);
     if (!gen) {
       png(RP, `textures/gm/ui/shape_${cat.key}${nn}`, lockedIcon());
       shapeData[cat.id].push({ name: shape.name, style: shape.style, sets: shape.sets, built: -1, surfaces: [] });
@@ -78,72 +93,167 @@ for (const cat of CATEGORIES) {
     const defs = gen();
     const variants = [];
     const texKey = `${cat.key}${nn}`;
+    let first = null;
     for (const [vtag, def] of Object.entries(defs)) {
       const tag = vtag === "std" ? "" : "s";
+      const label = `${cat.id}/${shape.name}${tag ? " (ince kol)" : ""}`;
+      const G = { cat: cat.id, trims: new Set(def.trims), tp: def.tp };
       const layout = layoutGarment(def.parts);
       const geoId = `geometry.gm.${texKey}${tag}`;
-      const { geo, motifGeo } = buildGeometry(geoId, layout, {
-        cat: cat.id, surfaces: def.surfaces, motifSize: MOTIF_SIZE[cat.id], maxMotifs: LIMITS.maxMotifs, armPivotY: def.pivotY,
+      const { geo, motifGeo, drawGeo } = buildGeometry(geoId, layout, {
+        cat: cat.id, surfaces: def.surfaces, motifSize: def.motifSize, maxMotifs: LIMITS.maxMotifs,
+        armPivotY: def.pivotY, drawCells: def.drawCells ?? [],
       });
       write(RP, `models/entity/gm/${texKey}${tag}.geo.json`, geo);
       write(RP, `models/entity/gm/${texKey}${tag}.motif.geo.json`, motifGeo);
-      const all = [...texels(layout)];
+      if (drawGeo) write(RP, `models/entity/gm/${texKey}${tag}.draw.geo.json`, drawGeo);
+
+      const all = [...texels(layout, def)].filter((c) => !c.hole);
+      for (const c of all) c.s = def.shade(c);
       const dir = `textures/gm/cloth/${texKey}${tag}`;
-      const base = new Canvas(TEX, TEX);
-      const detail = new Canvas(TEX, TEX);
-      for (const t of all) {
-        base.set(t.tx, t.ty, shade(BASE_WHITE, t.faceEdge ? 0.9 : 1));
-        if (t.bottom && t.face !== "up" && t.face !== "down" && t.tx % 2 === 0) detail.set(t.tx, t.ty, 0x5a5a5a);
+      const base = new Canvas(TEX, TEX), baseS = new Canvas(TEX, TEX), shadeC = new Canvas(TEX, TEX), detail = new Canvas(TEX, TEX);
+      for (const c of all) {
+        base.set(c.tx, c.ty, WHITE);
+        baseS.set(c.tx, c.ty, gray(c.s));
+        if (c.s < -0.015) shadeC.set(c.tx, c.ty, 0x000000, Math.min(255, Math.round(-c.s * 255)));
+        else if (c.s > 0.015) shadeC.set(c.tx, c.ty, 0xffffff, Math.min(255, Math.round(c.s * 255)));
+        const d = def.detail(c);
+        if (d != null) detail.set(c.tx, c.ty, d);
       }
       png(RP, `${dir}/base`, base);
+      png(RP, `${dir}/base_s`, baseS);
+      png(RP, `${dir}/shade`, shadeC);
       png(RP, `${dir}/detail`, detail);
+      for (let a = 0; a < ATOLYE.clothSlots; a++) png(RP, `${dir}/atolye_${a}`, base);
+
+      const pv = {
+        cat: cat.id, key: cat.key, shape: si, name: shape.name, variant: tag || "std",
+        parts: layout.parts.map((p) => ({ bone: p.bone, from: p.from, to: p.to, role: p.role, hide: hideKeys(cat.id, p), under: !!p.under })),
+        faces: layout.faces.map((f) => ({ part: f.part, face: f.face, x: f.x, y: f.y, w: f.w, h: f.h })),
+        shading: dataURI(baseS), detail: dataURI(detail), regions: [],
+        surfaces: def.surfaces, motifSize: def.motifSize, pivotY: def.pivotY ?? 22, motifBase: MOTIF_BASE, motifStep: MOTIF_STEP,
+        drawCells: def.drawCells ?? [],
+      };
       TEMPLATES.forEach((tpl, ti) => {
-        const masks = Array.from({ length: tpl.regions }, () => new Canvas(TEX, TEX));
         const override = def.templateOverrides?.[tpl.id];
         const fn = override ?? TEMPLATE_FN[tpl.id];
-        if (override) report.adaptations.push(`${cat.id}/${shape.name}${tag ? " (ince kol)" : ""}: "${tpl.name}" modele özel uyarlandı`);
+        if (override) report.adaptations.push(`${label}: "${tpl.name}" modele özel uyarlandı`);
+        const masks = Array.from({ length: tpl.regions }, () => new Canvas(TEX, TEX));
+        const map = new Canvas(TEX, TEX);
         const seen = new Set();
-        for (const t of all) {
-          const r = fn(t);
-          if (r < 0 || r >= tpl.regions) throw new Error(`${tpl.id} geçersiz bölge ${r}`);
+        for (const c of all) {
+          const r = fn(c, G);
+          if (!(r >= 0 && r < tpl.regions)) throw new Error(`${label} ${tpl.id}: geçersiz bölge ${r}`);
+          c.r = r;
           seen.add(r);
-          masks[r].set(t.tx, t.ty, 0xffffff);
+          masks[r].set(c.tx, c.ty, gray(c.s));
+          map.set(c.tx, c.ty, (r + 1) << 16);
         }
-        masks.forEach((m, r) => png(RP, `${dir}/t${String(ti).padStart(2, "0")}_r${String(r).padStart(2, "0")}`, m));
-        if (seen.size !== tpl.regions)
-          report.warnings.push(`${cat.id}/${shape.name}${tag ? " (ince kol)" : ""}: "${tpl.name}" ${seen.size}/${tpl.regions} bölge görünür — özel uyarlama gerekli`);
+        masks.forEach((m, r) => png(RP, `${dir}/t${pad2(ti)}_r${pad2(r)}`, m));
+        pv.regions.push(dataURI(map));
+        if (seen.size !== tpl.regions) report.warnings.push(`${label}: "${tpl.name}" ${seen.size}/${tpl.regions} bölge görünür — özel uyarlama gerekli`);
         if (!tag) {
-          const iso = all.map((t) => ({ p: t.p, face: t.face, color: SAMPLE[fn(t)] }));
-          png(RP, `textures/gm/ui/tpl_${texKey}_${String(ti).padStart(2, "0")}`, renderIso(iso));
-          if (ti === 0) {
-            const plain = all.map((t) => ({ p: t.p, face: t.face, color: 0xe8e8e8 }));
-            png(RP, `textures/gm/ui/shape_${texKey}`, renderIso(plain));
-          }
+          const iso = all.map((c) => ({ p: c.p, face: c.face, color: shade(SAMPLE[c.r], 1 + c.s) }));
+          png(RP, `textures/gm/ui/tpl_${texKey}_${pad2(ti)}`, renderIso(iso));
+          if (ti === 0) png(RP, `textures/gm/ui/shape_${texKey}`, renderIso(all.map((c) => ({ p: c.p, face: c.face, color: shade(0xdadada, 1 + c.s) }))));
         }
       });
-      const proBones = [...new Set(def.parts.filter((p) => p.pro).map((p) => `gm_${cat.id}_pro_${p.bone}`))];
-      variants.push({ tag, geoId, surfaces: def.surfaces, proBones });
+      preview.garments.push(pv);
+      const boneRules = {};
+      for (const p of def.parts) {
+        const keys = hideKeys(cat.id, p);
+        if (keys.length || p.under) boneRules[partBoneName(cat.id, p)] = { keys, under: !!p.under };
+      }
+      variants.push({ tag, geoId, surfaces: def.surfaces, boneRules, drawCells: def.drawCells });
+      defsForCheck.push({ cat: cat.id, variant: vtag, def });
+      if (!first) first = def;
     }
-    builtIndex[cat.id][si] = built[cat.id].length;
     shapeData[cat.id].push({
       name: shape.name, style: shape.style, sets: shape.sets, built: built[cat.id].length,
-      surfaces: variants[0].surfaces.map((s) => s.name),
+      motifSize: first.motifSize,
+      surfaces: first.surfaces.map((s) => ({ name: s.name, A: +(s.a[1] - s.a[0]).toFixed(3), B: +(s.b[1] - s.b[0]).toFixed(3) })),
+      draw: first.drawCells ? first.drawCells.map((c) => [c.face === "north" ? 0 : 1, c.row, c.col]) : null,
     });
-    built[cat.id].push({ texKey, variants, motifSize: MOTIF_SIZE[cat.id] });
+    built[cat.id].push({ texKey, variants, motifSize: first.motifSize });
   });
 }
 
-// ---------------------------------------------------------------- motifler
-for (const m of MOTIFS) {
-  const art = MOTIF_ART[m.id];
-  for (let ch = 0; ch < m.ch; ch++) {
-    const cv = new Canvas(12, 12);
-    art.forEach((row, y) => [...row].forEach((c, x) => { if (c === String(ch + 1)) cv.set(x, y, 0xffffff); }));
-    png(RP, `textures/gm/motif/${m.id}_${ch}`, cv);
+// ---------------------------------------------------------------- çakışma (titreme) denetimi
+{
+  const pick = (cat, v) => defsForCheck.filter((d) => d.cat === cat && (d.variant === v || (v === "slim" && d.variant === "std" && !defsForCheck.some((x) => x.cat === cat && x.variant === "slim"))));
+  const scen = [
+    ["hepsi, standart kol", ["hat", "top", "pants", "shoes"], "std", false],
+    ["hepsi, ince kol", ["hat", "top", "pants", "shoes"], "slim", true],
+    ["üst yok", ["hat", "pants", "shoes"], "std", false],
+  ];
+  let n = 0;
+  for (const [name, cats, v, slim] of scen) {
+    const gs = cats.flatMap((c) => pick(c, v).slice(0, 1));
+    for (const i of detect(gs, slim, MOTIF_BASE, MOTIF_STEP)) {
+      report.warnings.push(`çakışma (${name}): ${i.a} ↔ ${i.b} — aralık ${i.gap}`);
+      n++;
+    }
   }
-  png(RP, `textures/gm/ui/motif_${m.id}`, pixelIcon(art, { 1: 0x2b2b2b, 2: 0xd23c3c, 3: 0xf2c230 }, 4));
+  report.counts.zfight = n;
+}
+
+// ---------------------------------------------------------------- motifler
+// Arayüz simgesi ve önizleme için önerilen renkler.
+const ICON_COLORS = {
+  turk_bayragi: [0xe30a17, 0xffffff], ay_yildiz: [0xe30a17], nazar: [0x1e3a8a, 0xffffff, 0x38bdf8],
+  gokkusagi: [0xe53935, 0xfdd835, 0x1e88e5], lale: [0xd32f2f, 0x2e7d32], gezegen: [0xf4a261, 0x8d6e63],
+  futbol: [0xffffff, 0x222222], gulen_yuz: [0xfdd835, 0x222222], oyun_kolu: [0x37474f, 0xe53935],
+  domuz: [0xf4a0b0, 0xc0607a], inek: [0xf0f0f0, 0x303030], tavuk: [0xffffff, 0xd32f2f, 0xfbc02d],
+  kurbaga: [0x6a9a3a, 0x2a3a1a], panda: [0xf5f5f5, 0x202020], tilki: [0xe87a2a, 0xf5f5f5, 0x222222],
+  murekkep: [0x2a4a7a, 0x9ad0ff], balcik: [0x7cc05a, 0x2e5a1e], ghast: [0xf0f0f0, 0x707070],
+  orumcek: [0x3a3030, 0xd32f2f], mantar: [0xd32f2f, 0xf5f5f5], kaktus: [0x3a8a3a, 0x9ad06a],
+  mesale: [0x7a5230, 0xfdd835, 0xff8f00], totem: [0xe0b030, 0x2eae5a], ametist: [0x8a4ac8, 0xc89af0],
+  kabak: [0xe8892a, 0x3a2a10], pasta: [0xf5f0e0, 0xc8904a, 0xd32f2f], hilal: [0xf5f5f5], yildiz: [0xfdd835],
+};
+const DEFAULT_ICON = [0x2b2b2b, 0xd23c3c, 0xf2c230];
+for (const m of MOTIFS) {
+  const cols = ICON_COLORS[m.id] ?? DEFAULT_ICON;
+  const pm = { id: m.id, name: m.name, ch: m.ch, kind: m.kind, colors: cols, masks: [] };
+  if (m.kind === "pixel") {
+    const art = MOTIF_ART[m.id];
+    for (let ch = 0; ch < m.ch; ch++) {
+      const cv = new Canvas(12, 12);
+      art.forEach((row, y) => [...row].forEach((c, x) => { if (c === String(ch + 1)) cv.set(x, y, 0xffffff); }));
+      png(RP, `textures/gm/motif/${m.id}_${ch}`, cv);
+      pm.masks.push(dataURI(cv));
+    }
+    png(RP, `textures/gm/ui/motif_${m.id}`, pixelIcon(art, { 1: cols[0], 2: cols[1] ?? DEFAULT_ICON[1], 3: cols[2] ?? DEFAULT_ICON[2] }, 4));
+  } else if (m.kind === "vector" || m.kind === "shape") {
+    const size = m.id === "sekil_kare" ? 4 : m.kind === "shape" ? 64 : 32;
+    const layers = rasterize(VECTOR_MOTIFS[m.id], size, m.ch);
+    layers.forEach((L, ch) => {
+      const cv = new Canvas(size, size);
+      for (let i = 0; i < size * size; i++) if (L[i]) cv.set(i % size, Math.floor(i / size), 0xffffff);
+      png(RP, `textures/gm/motif/${m.id}_${ch}`, cv);
+      pm.masks.push(dataURI(cv));
+    });
+    const icon = new Canvas(48, 48);
+    rasterize(VECTOR_MOTIFS[m.id], 48, m.ch).forEach((L, ch) => {
+      for (let i = 0; i < 48 * 48; i++) if (L[i]) icon.set(i % 48, Math.floor(i / 48), cols[ch] ?? DEFAULT_ICON[ch]);
+    });
+    png(RP, `textures/gm/ui/motif_${m.id}`, icon);
+  } else if (m.kind === "photo") {
+    const cv = new Canvas(32, 32);
+    cv.fill(0, 0, 32, 32, 0x6b6b6b);
+    cv.fill(2, 2, 28, 28, 0xd9d9d9);
+    cv.fill(6, 18, 20, 8, 0x7aa35a);
+    cv.fill(20, 6, 6, 6, 0xf2c230);
+    png(RP, `textures/gm/photo/p${m.id.split("_")[1]}`, cv);
+    png(RP, `textures/gm/ui/motif_${m.id}`, cv);
+  }
+  preview.motifs.push(pm);
 }
 png(RP, "textures/gm/blank", new Canvas(4, 4));
+{
+  const w = new Canvas(4, 4);
+  w.fill(0, 0, 4, 4, 0xffffff);
+  png(RP, "textures/gm/white", w);
+}
 
 // ---------------------------------------------------------------- boyalar (arayüz simgeleri)
 for (const d of DYES) {
@@ -192,12 +302,17 @@ for (const d of DYES) {
 
 // ---------------------------------------------------------------- çanta (3B, 128×128, 16 renk)
 {
+  const P = (role, from, to, skip) => ({ bone: "bag", role, from, to, skip });
   const parts = [
-    { origin: [-4, 0, -3], size: [8, 7, 6] },
-    { origin: [-3, 7, -2], size: [6, 1.5, 4] },
-    { origin: [-3.5, 8.5, -2.5], size: [7, 1, 5] },
-    { origin: [-4.5, 3, -3.5], size: [9, 4, 0.5] },
-    { origin: [-1, 3.5, -3.75], size: [2, 2, 0.25] },
+    P("govde", [-4, 0.5, -3], [4, 7, 3]),
+    P("taban", [-4.2, 0, -3.2], [4.2, 0.6, 3.2]),
+    P("boyun", [-3.2, 7, -2.2], [3.2, 8.2, 2.2], ["down"]),
+    P("dugum", [-1.3, 8.2, -1.3], [1.3, 9.3, 1.3], ["down"]),
+    P("kapak", [-4.3, 3.6, -3.35], [4.3, 7.25, -3.0], ["south"]),
+    P("toka", [-0.95, 4.0, -3.62], [0.95, 5.5, -3.35], ["south"]),
+    P("sap", [-3.7, 7, -0.3], [-3.25, 10.5, 0.3], ["down"]),
+    P("sap", [3.25, 7, -0.3], [3.7, 10.5, 0.3], ["down"]),
+    P("sap", [-3.7, 10.5, -0.3], [3.7, 10.95, 0.3]),
   ];
   const layout = layoutGarment(parts);
   const cubes = parts.map((p, pi) => {
@@ -206,26 +321,35 @@ for (const d of DYES) {
       uv[f.face] = f.face === "up" ? { uv: [f.x + f.w, f.y + f.h], uv_size: [-f.w, -f.h] }
         : f.face === "down" ? { uv: [f.x + f.w, f.y], uv_size: [-f.w, f.h] } : { uv: [f.x, f.y], uv_size: [f.w, f.h] };
     }
-    return { origin: p.origin, size: p.size, uv };
+    return { origin: p.from, size: [0, 1, 2].map((k) => +(p.to[k] - p.from[k]).toFixed(4)), uv };
   });
   write(RP, "models/entity/gm/bag.geo.json", {
     format_version: "1.16.0",
     "minecraft:geometry": [{
-      description: { identifier: "geometry.gm.bag", texture_width: 128, texture_height: 128, visible_bounds_width: 1, visible_bounds_height: 1 },
+      description: { identifier: "geometry.gm.bag", texture_width: 128, texture_height: 128, visible_bounds_width: 1, visible_bounds_height: 1.2 },
       bones: [{ name: "bag", pivot: [0, 0, 0], cubes }],
     }],
   });
-  const all = [...texels(layout)];
+  const all = [...texels(layout, { topY: 11, bottomY: 0 })];
+  const sh = (c) => {
+    let v = (noise(c.tx * 0.6, c.ty * 0.6, 3) - 0.5) * 0.12 + (hash2(c.tx, c.ty, 5) - 0.5) * 0.05;
+    if (c.face === "up") v += 0.08;
+    if (c.face === "down") v -= 0.25;
+    if (c.face === "east" || c.face === "west") v -= 0.06;
+    if (c.edge * 2 < 1) v -= 0.14;
+    else if (c.edge * 2 < 2 && Math.floor((c.tx + c.ty) / 2) % 2 === 0 && c.role !== "toka") v += 0.18;
+    if (c.role === "govde" && c.y < 1.3 && c.face !== "up") v -= 0.1;
+    if (c.role === "govde" && c.face !== "up" && c.face !== "down") v += 0.05 * Math.sin(c.U * 2.4);
+    return v;
+  };
   for (const d of DYES) {
     const cv = new Canvas(128, 128);
-    for (const t of all) {
-      let c = d.rgb;
-      if (t.part === 3) c = shade(d.rgb, 0.75);
-      if (t.part === 1 || t.part === 2) c = 0x7a4a24;
-      if (t.part === 4) c = 0xd8b030;
-      if (t.faceEdge) c = shade(c, 0.8);
-      if ((t.tx + t.ty) % 7 === 0 && t.part === 0) c = shade(c, 0.93);
-      cv.set(t.tx, t.ty, c);
+    for (const c of all) {
+      let col = d.rgb;
+      if (c.role === "taban" || c.role === "sap" || c.role === "dugum") col = shade(d.rgb, 0.62);
+      if (c.role === "kapak") col = shade(d.rgb, 0.85);
+      if (c.role === "toka") col = c.edge * 2 < 1 ? 0x8a6a1a : 0xd8b030;
+      cv.set(c.tx, c.ty, shade(col, 1 + sh(c)));
     }
     png(RP, `textures/gm/entity/bag_${d.id}`, cv);
   }
@@ -241,7 +365,7 @@ for (const d of DYES) {
         name: "wb", pivot: [0, 0, 0], cubes: [
           { origin: [-8, 12, -8], size: [16, 4, 16], uv: { north: { uv: [0, 0], uv_size: [16, 4] }, south: { uv: [0, 0], uv_size: [16, 4] }, east: { uv: [0, 0], uv_size: [16, 4] }, west: { uv: [0, 0], uv_size: [16, 4] }, up: { uv: [16, 16], uv_size: [16, 16] }, down: { uv: [0, 16], uv_size: [16, 16] } } },
           ...[[-7, -7], [5, -7], [-7, 5], [5, 5]].map(([x, z]) => ({ origin: [x, 0, z], size: [2, 12, 2], uv: { north: { uv: [0, 4], uv_size: [2, 12] }, south: { uv: [0, 4], uv_size: [2, 12] }, east: { uv: [0, 4], uv_size: [2, 12] }, west: { uv: [0, 4], uv_size: [2, 12] }, down: { uv: [0, 4], uv_size: [2, 2] } } })),
-          { origin: [-1, 16, 2], size: [2, 10, 2], uv: { north: { uv: [4, 4], uv_size: [2, 10] }, south: { uv: [4, 4], uv_size: [2, 10] }, east: { uv: [4, 4], uv_size: [2, 10] }, west: { uv: [4, 4], uv_size: [2, 10] }, up: { uv: [4, 4], uv_size: [2, 2] } } },
+          { origin: [-1, 16, 2], size: [2, 4.5, 2], uv: { north: { uv: [4, 4], uv_size: [2, 4.5] }, south: { uv: [4, 4], uv_size: [2, 4.5] }, east: { uv: [4, 4], uv_size: [2, 4.5] }, west: { uv: [4, 4], uv_size: [2, 4.5] } } },
           { origin: [-4, 20, 1.5], size: [8, 6, 3], uv: { north: { uv: [8, 4], uv_size: [8, 6] }, south: { uv: [8, 4], uv_size: [8, 6] }, east: { uv: [16, 4], uv_size: [3, 6] }, west: { uv: [16, 4], uv_size: [3, 6] }, up: { uv: [8, 10], uv_size: [8, 3] }, down: { uv: [8, 10], uv_size: [8, 3] } } },
         ],
       }],
@@ -262,7 +386,7 @@ for (const d of DYES) {
 
 // ---------------------------------------------------------------- render (oyuncu)
 const vanillaPlayer = JSON.parse(fs.readFileSync(path.join(ROOT, "src/vanilla/player.entity.json"), "utf8"));
-const R = buildRender({ CATEGORIES, TEMPLATES, MOTIFS, built, LIMITS });
+const R = buildRender({ CATEGORIES, TEMPLATES, MOTIFS, DYES, built, LIMITS, ATOLYE });
 write(RP, "entity/player.entity.json", patchPlayerEntity(vanillaPlayer, R));
 write(RP, "render_controllers/gm_player.render_controllers.json", R.rcFile);
 write(RP, "animations/gm_player.animation.json", R.animFile);
@@ -446,22 +570,15 @@ write(RP, "ui/server_form.json", {
 });
 
 // ---------------------------------------------------------------- dil dosyaları
-const LANG = {
-  tr_TR: {
-    "item.gm.hat_base": "Beyaz Temel Şapka", "item.gm.top_base": "Beyaz Temel Üst",
-    "item.gm.pants_base": "Beyaz Temel Pantolon", "item.gm.shoes_base": "Beyaz Temel Ayakkabı",
-    "item.gm.hat": "Şapka", "item.gm.top": "Elbise/Üst", "item.gm.pants": "Pantolon", "item.gm.shoes": "Ayakkabı",
-    "tile.gm.workbench.name": "Giysi Tezgâhı", "entity.gm:placed_bag.name": "Giysi Çantası",
-    ...Object.fromEntries(DYES.map((d) => [`item.gm.bag_${d.id}`, `Giysi Çantası (${d.name})`])),
-  },
-  en_US: {
-    "item.gm.hat_base": "White Base Hat", "item.gm.top_base": "White Base Top",
-    "item.gm.pants_base": "White Base Pants", "item.gm.shoes_base": "White Base Shoes",
-    "item.gm.hat": "Hat", "item.gm.top": "Dress/Top", "item.gm.pants": "Pants", "item.gm.shoes": "Shoes",
-    "tile.gm.workbench.name": "Clothing Workbench", "entity.gm:placed_bag.name": "Clothing Bag",
-    ...Object.fromEntries(DYES.map((d) => [`item.gm.bag_${d.id}`, `Clothing Bag (${d.id.replace("_", " ")})`])),
-  },
+// Mod tamamen Türkçedir: oyun dili ne olursa olsun aynı Türkçe metinler gösterilir.
+const TR = {
+  "item.gm.hat_base": "Beyaz Temel Şapka", "item.gm.top_base": "Beyaz Temel Üst",
+  "item.gm.pants_base": "Beyaz Temel Pantolon", "item.gm.shoes_base": "Beyaz Temel Ayakkabı",
+  "item.gm.hat": "Şapka", "item.gm.top": "Elbise/Üst", "item.gm.pants": "Pantolon", "item.gm.shoes": "Ayakkabı",
+  "tile.gm.workbench.name": "Giysi Tezgâhı", "entity.gm:placed_bag.name": "Giysi Çantası",
+  ...Object.fromEntries(DYES.map((d) => [`item.gm.bag_${d.id}`, `Giysi Çantası (${d.name})`])),
 };
+const LANG = { tr_TR: TR, en_US: TR, en_GB: TR };
 for (const [lang, entries] of Object.entries(LANG)) {
   const body = Object.entries(entries).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
   write(RP, `texts/${lang}.lang`, body);
@@ -493,7 +610,8 @@ write(RP, "manifest.json", {
   modules: [{ type: "resources", uuid: UUID.rpRes, version: VERSION }],
   dependencies: [{ uuid: UUID.bp, version: VERSION }],
 });
-const icon = renderIso([...texels(layoutGarment([{ origin: [-4, 0, -4], size: [8, 8, 8] }]))].map((t) => ({ p: t.p, face: t.face, color: SAMPLE[TEMPLATE_FN.dama(t)] })), 128);
+const iconDef = { topY: 8, bottomY: 0 };
+const icon = renderIso([...texels(layoutGarment([{ bone: "body", group: "head", from: [-4, 0, -4], to: [4, 8, 4] }]), iconDef)].map((t) => ({ p: t.p, face: t.face, color: SAMPLE[(Math.floor(t.U / 2 + 0.5) + Math.floor(t.V / 2)) & 1 ? 1 : 3] })), 128);
 png(BP, "pack_icon", icon);
 png(RP, "pack_icon", icon);
 
@@ -501,12 +619,16 @@ png(RP, "pack_icon", icon);
 const dataModule = {
   CATEGORIES: CATEGORIES.map(({ id, key, name, baseItem, item }) => ({ id, key, name, baseItem, item })),
   SHAPES: shapeData,
-  TEMPLATES, MOTIFS, SETS, LIMITS,
+  TEMPLATES, SETS, LIMITS, MOTIF_RULES, ATOLYE,
+  MOTIFS: MOTIFS.map(({ id, name, ch, kind }) => ({ id, name, ch, kind })),
+  DRAW_TEMPLATE, ATOLYE_TEMPLATE,
   DYES: DYES.map(({ id, name, rgb }) => ({ id, name, rgb })),
 };
 write(BP, "scripts/data.js", `// Otomatik üretildi (tools/build.mjs). Elle düzenlemeyin.\nexport const DATA = ${JSON.stringify(dataModule)};\n`);
 const scriptDir = path.join(ROOT, "src/scripts");
 for (const f of fs.readdirSync(scriptDir)) write(BP, `scripts/${f}`, fs.readFileSync(path.join(scriptDir, f)));
+
+write(OUT, "preview_data.json", JSON.stringify(preview));
 
 // ---------------------------------------------------------------- paketleme
 const dist = path.join(ROOT, "dist");
@@ -521,6 +643,7 @@ report.counts.mcaddonBytes = fs.statSync(target).size;
 write(OUT, "report.json", report);
 console.log(`Dosya: ${fileCount}, render controller: ${report.counts.renderControllers}, oyuncu dokusu: ${report.counts.playerTextures}`);
 console.log(`Üretilen şekiller: ${JSON.stringify(report.counts.builtShapes)}`);
+console.log(`Çakışma (titreme) denetimi: ${report.counts.zfight} sorun`);
 for (const a of report.adaptations) console.log("  uyarlama: " + a);
 for (const w of report.warnings) console.log("  UYARI: " + w);
 if (report.warnings.length) process.exitCode = 2;

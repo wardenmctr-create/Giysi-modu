@@ -167,8 +167,14 @@ export const TEMPLATES = [
   { id: "on_alti", name: "16 parçalı düzen", regions: 16 },
 ];
 
-// 50 motif. ch: renk kanalı sayısı (38 tek, 2 iki, 10 üç kanallı).
-const M = (id, name, ch = 1) => ({ id, name, ch });
+// Motifler. ch: renk kanalı sayısı. kind:
+//   pixel  — 12×12 piksel çizim; büyütme %75–200, dönme 90° adımla (piksel ızgarası bozulmasın)
+//   vector — yüksek çözünürlüklü vektör; büyütme %50–300, serbest dönme (15° adım)
+//   shape  — ayarlanabilir şekil; en ve boy ayrı ayrı %25–400, serbest dönme
+//   photo  — Atölye'den gelen fotoğraf yuvası; büyütme %50–300, serbest dönme
+// İlk 50 motif özgün listedir (38 tek, 2 iki, 10 üç kanallı); sonrakiler eklenen motiflerdir.
+const M = (id, name, ch = 1, kind = "pixel") => ({ id, name, ch, kind });
+const V = (id, name, ch = 1) => M(id, name, ch, "vector");
 export const MOTIFS = [
   M("creeper", "Creeper yüzü"), M("enderman", "Enderman gözleri"), M("kedi", "Kedi", 3),
   M("kurt", "Kurt"), M("aksolotl", "Aksolotl", 3), M("ari", "Arı", 3), M("wither", "Wither"),
@@ -178,14 +184,39 @@ export const MOTIFS = [
   M("ender_inci", "Ender incisi"), M("ender_goz", "Ender gözü", 3), M("masa", "Çalışma masası"),
   M("tnt", "TNT", 3), M("cim", "Çim bloğu", 2), M("gecit", "Nether geçidi", 3),
   M("nether_yildiz", "Nether yıldızı"),
-  M("yildiz", "Yıldız"), M("kalp", "Kalp"), M("simsek", "Şimşek"), M("hilal", "Hilal"),
-  M("gunes", "Güneş"), M("bulut", "Bulut"), M("yagmur", "Yağmur bulutu"), M("cicek", "Çiçek", 3),
-  M("yaprak", "Yaprak"), M("agac", "Ağaç"), M("dag", "Dağ"), M("dalga", "Dalga"),
-  M("alev", "Alev", 3), M("kar", "Kar tanesi"), M("pusula", "Pusula"), M("capa", "Çapa"),
-  M("kafatasi", "Kafatası"), M("kelebek", "Kelebek", 3), M("pati", "Pati"), M("disli", "Dişli"),
-  M("dama", "Dama", 2), M("cift_serit", "Çift şerit"), M("girdap", "Girdap"),
+  V("yildiz", "Yıldız"), V("kalp", "Kalp"), V("simsek", "Şimşek"), V("hilal", "Hilal"),
+  V("gunes", "Güneş"), V("bulut", "Bulut"), V("yagmur", "Yağmur bulutu"), M("cicek", "Çiçek", 3),
+  V("yaprak", "Yaprak"), M("agac", "Ağaç"), M("dag", "Dağ"), V("dalga", "Dalga"),
+  M("alev", "Alev", 3), V("kar", "Kar tanesi"), V("pusula", "Pusula"), M("capa", "Çapa"),
+  M("kafatasi", "Kafatası"), M("kelebek", "Kelebek", 3), V("pati", "Pati"), V("disli", "Dişli"),
+  M("dama", "Dama", 2), V("cift_serit", "Çift şerit"), V("girdap", "Girdap"),
   M("kanat", "Kanatlar"), M("tac", "Taç"),
+  // ---- eklenen motifler
+  V("ay_yildiz", "Ay yıldız (Türk bayrağı)"), V("turk_bayragi", "Türk bayrağı", 2),
+  V("nazar", "Nazar boncuğu", 3), V("lale", "Lale", 2), V("selcuklu", "Selçuklu yıldızı"),
+  V("nota", "Nota"), V("baris", "Barış işareti"), V("gulen_yuz", "Gülen yüz", 2), V("yonca", "Dört yapraklı yonca"),
+  V("sonsuz", "Sonsuzluk"), V("damla", "Damla"), V("gezegen", "Gezegen", 2), V("gokkusagi", "Gökkuşağı", 3),
+  V("ok", "Ok"), V("futbol", "Futbol topu", 2), V("oyun_kolu", "Oyun kolu", 2),
+  M("domuz", "Domuz", 2), M("inek", "İnek", 2), M("tavuk", "Tavuk", 3), M("kurbaga", "Kurbağa", 2),
+  M("panda", "Panda", 2), M("tilki", "Tilki", 3), M("murekkep", "Mürekkep balığı", 2), M("balcik", "Balçık", 2),
+  M("ghast", "Ghast", 2), M("orumcek", "Örümcek", 2), M("mantar", "Mantar", 2), M("kaktus", "Kaktüs", 2),
+  M("mesale", "Meşale", 3), M("totem", "Ölümsüzlük totemi", 2), M("ametist", "Ametist", 2),
+  M("kabak", "Kabak feneri", 2), M("pasta", "Pasta", 3),
+  M("sekil_kare", "Kare / dikdörtgen / çubuk", 1, "shape"), M("sekil_daire", "Daire / elips", 1, "shape"),
+  M("sekil_ucgen", "Üçgen", 1, "shape"), M("sekil_halka", "Halka", 1, "shape"),
+  M("sekil_baklava", "Eşkenar dörtgen", 1, "shape"), M("sekil_yarim", "Yarım daire", 1, "shape"),
+  ...Array.from({ length: 8 }, (_, k) => M(`foto_${k}`, `Foto ${k + 1} (Atölye)`, 0, "photo")),
 ];
+
+export const MOTIF_RULES = {
+  pixel: { scale: [75, 200], scaleStep: 25, rotStep: 90 },
+  vector: { scale: [50, 300], scaleStep: 10, rotStep: 15 },
+  shape: { scale: [25, 400], scaleStep: 10, rotStep: 15, stretch: true },
+  photo: { scale: [50, 300], scaleStep: 10, rotStep: 15 },
+};
+
+// Atölye yuvaları: şekil başına hazır giysi dokusu yuvası ve ortak fotoğraf yuvası sayısı.
+export const ATOLYE = { clothSlots: 4, photoSlots: 8 };
 
 // Vanilla boya renkleri (Bedrock boya rengi değerleri).
 export const DYES = [
@@ -220,9 +251,12 @@ export function validateCatalog() {
   }
   if (TEMPLATES.length !== 25) errors.push(`şablon sayısı ${TEMPLATES.length}`);
   for (const t of TEMPLATES) if (t.regions < 1 || t.regions > 16) errors.push(`şablon ${t.id} bölge ${t.regions}`);
-  if (MOTIFS.length !== 50) errors.push(`motif sayısı ${MOTIFS.length}`);
-  const ch = [1, 2, 3].map((n) => MOTIFS.filter((m) => m.ch === n).length);
-  if (ch[0] !== 38 || ch[1] !== 2 || ch[2] !== 10) errors.push(`motif kanalları ${ch.join("/")}`);
+  const first = MOTIFS.slice(0, 50);
+  const ch = [1, 2, 3].map((n) => first.filter((m) => m.ch === n).length);
+  if (ch[0] !== 38 || ch[1] !== 2 || ch[2] !== 10) errors.push(`ilk 50 motifin kanalları ${ch.join("/")}`);
+  const added = MOTIFS.slice(50).filter((m) => m.kind === "pixel" || m.kind === "vector");
+  if (added.length < 20) errors.push(`eklenen motif ${added.length} (< 20)`);
+  if (new Set(MOTIFS.map((m) => m.id)).size !== MOTIFS.length) errors.push("motif kimliği tekrar ediyor");
   for (const id of Object.keys(SETS)) {
     for (const c of CATEGORIES)
       if (!SHAPES[c.id].some((s) => s.sets.includes(id))) errors.push(`set ${id}: ${c.id} parçası yok`);

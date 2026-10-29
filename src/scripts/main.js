@@ -5,6 +5,7 @@ import { createClothItem, newId, bagContainer, ensureBagId, giveOrDrop } from ".
 import { initBags, getState, stats, resyncAll } from "./bags.js";
 import { initBench } from "./bench.js";
 import { initPlaced, initPlacedEvents } from "./placed.js";
+import { registerAtolye } from "./atolye.js";
 
 system.beforeEvents.startup.subscribe((e) => {
   initBench(e.blockComponentRegistry);
@@ -25,7 +26,7 @@ function densest(cat) {
   const three = DATA.MOTIFS.map((m, i) => (m.ch === 3 ? i : -1)).filter((i) => i >= 0);
   const motifs = [];
   for (let m = 0; m < DATA.LIMITS.maxMotifs; m++) {
-    motifs.push({ i: three[m % three.length], f: m % surfaces, x: (m * 5) % 16, y: (m * 3) % 16, c: [m % 16, (m + 5) % 16, (m + 10) % 16] });
+    motifs.push({ i: three[m % three.length], f: m % surfaces, x: (m * 5) % 16, y: (m * 3) % 16, s: 100, w: 100, h: 100, r: (m * 90) % 360, c: [m % 16, (m + 5) % 16, (m + 10) % 16] });
   }
   return {
     v: 1, id: newId("c"), cat: cat.id, shape, tpl: TPL16,
@@ -34,9 +35,23 @@ function densest(cat) {
 }
 
 system.afterEvents.scriptEventReceive.subscribe((e) => {
+  // Atölye paketi kendi tasarımlarını bildirir (oyuncu kaynağı olmadan, dünya açılışında).
+  if (e.id === "gm:atolye") {
+    const n = registerAtolye(e.message);
+    console.warn(`[Giysi] Atölye kaydı: ${n} tasarım`);
+    return;
+  }
   const player = /** @type {import("@minecraft/server").Player} */ (e.sourceEntity);
   if (player?.typeId !== "minecraft:player") return;
   switch (e.id) {
+    case "gm:mod": {
+      // Renklendirme yöntemi: a = düz maske + gölge katmanı, b = gölgeli maske + çarpım
+      const b = e.message.trim().toLowerCase() === "b";
+      world.setDynamicProperty("gm:mod", b ? 1 : 0);
+      resyncAll();
+      player.sendMessage(`§bRenklendirme yöntemi: ${b ? "B (çarpım)" : "A (düz + gölge katmanı)"}`);
+      break;
+    }
     case "gm:kit": {
       giveOrDrop(player, new ItemStack("gm:workbench", 1));
       for (const c of DATA.CATEGORIES) giveOrDrop(player, new ItemStack(c.baseItem, 1));

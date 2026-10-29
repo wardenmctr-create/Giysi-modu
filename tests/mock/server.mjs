@@ -55,6 +55,7 @@ export class ItemStack extends DynProps {
   }
 }
 
+export const InputPermissionCategory = { Camera: 1, Movement: 2, LateralMovement: 4, Sneak: 5 };
 export const EquipmentSlot = { Head: "Head", Chest: "Chest", Legs: "Legs", Feet: "Feet", Mainhand: "Mainhand", Offhand: "Offhand" };
 export const Direction = { Up: "Up", Down: "Down", North: "North", South: "South", East: "East", West: "West" };
 
@@ -88,6 +89,9 @@ export class Player extends Entity {
     this.equipment = {};
     this.messages = []; this.actionbar = []; this.animations = [];
     this.selectedSlotIndex = 0;
+    this.cameraLog = []; this.movement = true;
+    this.camera = { setCamera: (preset, opts) => this.cameraLog.push({ preset, opts }), clear: () => this.cameraLog.push({ clear: true }) };
+    this.inputPermissions = { setPermissionCategory: (cat, on) => { if (cat === InputPermissionCategory.Movement) this.movement = on; } };
     this.onScreenDisplay = { setActionBar: (m) => this.actionbar.push(m) };
   }
   getComponent(id) {

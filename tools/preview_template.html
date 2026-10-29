@@ -1,0 +1,766 @@
+<title>Giysi Modu Önizleme</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@500;700&family=Rubik:wght@400;500;600&display=swap">
+<style>
+  /* Düzen: solda kesim altlığı üzerinde dönen manken, sağda (telefonda altta) terzi paneli. */
+  :root {
+    --bg: #eef1f0; --panel: #ffffff; --ink: #1b2420; --muted: #5a6964; --line: #d3dcd8;
+    --accent: #1e7a5a; --accent-ink: #ffffff; --mat: #2f5d50; --mat-line: rgba(255, 255, 255, 0.13);
+    --mat-line-strong: rgba(255, 255, 255, 0.24); --chip: #f4f6f5; --warn: #9a5b00;
+    --display: "Pixelify Sans", "Courier New", monospace;
+    --body: "Rubik", "Segoe UI", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111715; --panel: #18201e; --ink: #e5edea; --muted: #9aaba5; --line: #2a3633;
+      --accent: #4fbf94; --accent-ink: #0c1311; --mat: #213f36; --mat-line: rgba(255, 255, 255, 0.08);
+      --mat-line-strong: rgba(255, 255, 255, 0.16); --chip: #212b28; --warn: #f0b45a; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #111715; --panel: #18201e; --ink: #e5edea; --muted: #9aaba5; --line: #2a3633;
+    --accent: #4fbf94; --accent-ink: #0c1311; --mat: #213f36; --mat-line: rgba(255, 255, 255, 0.08);
+    --mat-line-strong: rgba(255, 255, 255, 0.16); --chip: #212b28; --warn: #f0b45a; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.45; }
+  .app { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 14px 24px; max-width: 1240px; margin: 0 auto; display: grid; gap: 14px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+  h1 { font-family: var(--display); font-weight: 700; font-size: 1.9rem; letter-spacing: 0.02em; margin: 0; text-wrap: balance; }
+  header p { margin: 0; color: var(--muted); }
+  .layout { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+  @media (max-width: 860px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+
+  .stage { position: relative; border-radius: 10px; overflow: hidden; background-color: var(--mat);
+    background-image:
+      linear-gradient(var(--mat-line-strong) 1px, transparent 1px), linear-gradient(90deg, var(--mat-line-strong) 1px, transparent 1px),
+      linear-gradient(var(--mat-line) 1px, transparent 1px), linear-gradient(90deg, var(--mat-line) 1px, transparent 1px);
+    background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px; aspect-ratio: 4 / 5; max-height: 78vh; width: 100%; min-height: 360px; }
+  @media (max-width: 860px) { .stage { aspect-ratio: auto; height: 62vh; max-height: 560px; } }
+  #sahne { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; display: block; }
+  #sahne:active { cursor: grabbing; }
+  .stage-tools { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .stage-tools button, .focus button { font: 500 0.82rem var(--body); color: #f2f6f4; background: rgba(10, 22, 18, 0.55); border: 1px solid rgba(255, 255, 255, 0.22); border-radius: 999px; padding: 6px 11px; cursor: pointer; }
+  .stage-tools button[aria-pressed="true"], .focus button[aria-pressed="true"] { background: #f2f6f4; color: #14211c; }
+  .focus { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .ruler { position: absolute; top: 50px; right: 10px; font: 500 0.7rem var(--body); color: rgba(255, 255, 255, 0.7); letter-spacing: 0.06em; text-transform: uppercase; }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; display: grid; gap: 0; min-width: 0; }
+  .tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--line); }
+  .tab { appearance: none; background: none; border: 0; border-bottom: 3px solid transparent; padding: 11px 6px 9px; font: 600 0.9rem var(--body); color: var(--muted); cursor: pointer; display: grid; justify-items: center; gap: 4px; }
+  .tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+  .tab .on { font: 500 0.72rem var(--body); color: var(--muted); }
+  .tab .on.worn { color: var(--accent); }
+  .sec { padding: 14px 16px; display: grid; gap: 10px; border-bottom: 1px solid var(--line); min-width: 0; }
+  .sec:last-child { border-bottom: 0; }
+  .sec h2 { font-family: var(--display); font-weight: 500; font-size: 1.05rem; letter-spacing: 0.03em; margin: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .hint { color: var(--muted); font-size: 0.85rem; margin: 0; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  label.field { display: grid; gap: 4px; font-size: 0.85rem; color: var(--muted); min-width: 0; }
+  select, input[type="range"] { width: 100%; }
+  select { font: 500 0.95rem var(--body); color: var(--ink); background: var(--chip); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .btn { font: 600 0.85rem var(--body); border-radius: 8px; padding: 7px 12px; border: 1px solid var(--line); background: var(--chip); color: var(--ink); cursor: pointer; }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { width: 38px; height: 38px; border-radius: 8px; border: 2px solid var(--line); position: relative; cursor: pointer; padding: 0; font: 600 0.72rem var(--body); color: #1b2420; display: grid; place-items: end start; }
+  .chip span { background: rgba(255, 255, 255, 0.85); border-radius: 0 6px 0 6px; padding: 0 4px; line-height: 1.3; }
+  .chip.sel { border-color: var(--ink); box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent); }
+  .chip.empty { background-image: linear-gradient(135deg, transparent 46%, #c0392b 47%, #c0392b 53%, transparent 54%); background-color: #f4f4f4; }
+  .palette { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 5px; }
+  .dye { aspect-ratio: 1; border-radius: 6px; border: 2px solid rgba(0, 0, 0, 0.18); cursor: pointer; padding: 0; position: relative; }
+  .dye.empty { background: #f4f4f4; background-image: linear-gradient(135deg, transparent 46%, #c0392b 47%, #c0392b 53%, transparent 54%); }
+  .dye:hover { transform: translateY(-1px); }
+  .target { font-size: 0.85rem; color: var(--muted); }
+  .target b { color: var(--ink); font-weight: 600; }
+
+  .motifs { display: grid; gap: 6px; }
+  .mrow { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--chip); cursor: pointer; text-align: left; font: inherit; color: inherit; width: 100%; }
+  .mrow.sel { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .mrow img, .picker img { width: 32px; height: 32px; image-rendering: pixelated; }
+  .mrow small { color: var(--muted); display: block; font-size: 0.78rem; }
+  .mrow .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .editor { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; }
+  .editor .full { grid-column: 1 / -1; }
+  @media (max-width: 420px) { .editor { grid-template-columns: minmax(0, 1fr); } }
+  .val { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 600; }
+  .picker { display: grid; gap: 8px; }
+  .picker .groups { display: flex; flex-wrap: wrap; gap: 6px; }
+  .picker .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(46px, 1fr)); gap: 6px; max-height: 236px; overflow-y: auto; padding: 2px; }
+  .picker .grid button { background: var(--chip); border: 1px solid var(--line); border-radius: 8px; padding: 6px 0; cursor: pointer; display: grid; place-items: center; }
+  .picker .grid button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); }
+  .cost { font-size: 0.9rem; }
+  .cost ul { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+  .cost li { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px 3px 4px; border: 1px solid var(--line); border-radius: 999px; font-variant-numeric: tabular-nums; }
+  .cost li i { width: 16px; height: 16px; border-radius: 4px; display: inline-block; border: 1px solid rgba(0, 0, 0, 0.2); }
+  .note { font-size: 0.82rem; color: var(--muted); border-left: 3px solid var(--accent); padding-left: 10px; margin: 0; }
+  .loading { position: absolute; inset: 0; display: grid; place-items: center; color: #e8f1ed; font-family: var(--display); font-size: 1.1rem; }
+  @media (prefers-reduced-motion: reduce) { .dye:hover { transform: none; } }
+</style>
+
+<div class="app">
+  <header>
+    <h1>Giysi Modu</h1>
+    <p>3B önizleme · doğrulama prototipi · 4 şekil, 25 şablon, 89 motif</p>
+  </header>
+  <main class="layout">
+    <section class="stage" aria-label="3B önizleme">
+      <canvas id="sahne" aria-label="Döndürülebilir 3B manken"></canvas>
+      <div class="loading" id="yukleniyor">Yükleniyor…</div>
+      <div class="focus" role="group" aria-label="Yakınlaştırma">
+        <button type="button" data-focus="all" aria-pressed="true">Tüm boy</button>
+        <button type="button" data-focus="hat">Şapka</button>
+        <button type="button" data-focus="top">Üst</button>
+        <button type="button" data-focus="pants">Pantolon</button>
+        <button type="button" data-focus="shoes">Ayakkabı</button>
+      </div>
+      <div class="stage-tools" role="group" aria-label="Görünüm">
+        <button type="button" id="tDon" aria-pressed="true">Kendi dönsün</button>
+        <button type="button" id="tYuru" aria-pressed="false">Yürüt</button>
+        <button type="button" id="tZirh" aria-pressed="false">Zırh takılı</button>
+        <button type="button" id="tInce" aria-pressed="false">İnce kol</button>
+        <button type="button" id="tArka" aria-pressed="false">Arkasını göster</button>
+      </div>
+    </section>
+
+    <section class="panel" aria-label="Tasarım">
+      <div class="tabs" role="tablist" id="sekmeler"></div>
+      <div class="sec">
+        <h2><span id="sekilAdi">Şekil</span><label class="row" style="gap:6px;font:500 0.85rem var(--body)"><input type="checkbox" id="giy" checked> Giyili</label></h2>
+        <p class="hint" id="sekilNot"></p>
+        <label class="field" for="sablon">Renk şablonu
+          <select id="sablon"></select>
+        </label>
+        <div class="row" style="justify-content:space-between">
+          <div class="chips" id="bolgeler" aria-label="Boya bölgeleri"></div>
+        </div>
+        <div class="row">
+          <button class="btn" type="button" id="rastgele">Rastgele renk</button>
+          <button class="btn" type="button" id="bosalt">Bölgeleri boşalt</button>
+        </div>
+      </div>
+      <div class="sec">
+        <h2>Boya <span class="target" id="hedef"></span></h2>
+        <div class="palette" id="palet"></div>
+      </div>
+      <div class="sec">
+        <h2>Motifler <span class="row" style="gap:6px"><span class="hint" id="motifSay"></span><button class="btn primary" type="button" id="motifEkle">Motif ekle</button></span></h2>
+        <div class="motifs" id="motifListe"></div>
+        <div id="motifEditor" hidden></div>
+      </div>
+      <div class="sec cost">
+        <h2>Gereken boya</h2>
+        <ul id="maliyet"></ul>
+        <p class="note">Bu sayfa, moddaki modellerin ve dokuların aynısından üretildi. Oyun içindeki ışık ve renk yöntemi kapı testinde doğrulanacak. Kalan 96 şekil kapı testinden sonra eklenecek.</p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script type="application/json" id="veri">/*__VERI__*/</script>
+<script>
+(() => {
+  const D = JSON.parse(document.getElementById("veri").textContent);
+  const DYES = D.dyes;
+  const TPL = D.templates;
+  const CATS = [
+    { id: "hat", name: "Şapka" }, { id: "top", name: "Üst" }, { id: "pants", name: "Pantolon" }, { id: "shoes", name: "Ayakkabı" },
+  ];
+  const RULES = { pixel: [75, 200, 25, 90], vector: [50, 300, 10, 15], shape: [25, 400, 10, 15] };
+  const dyeIdx = (id) => DYES.findIndex((d) => d.id === id);
+  const tplIdx = (id) => TPL.findIndex((t) => t.id === id);
+  const motIdx = (id) => D.motifs.findIndex((m) => m.id === id);
+  const hex = (rgb) => "#" + rgb.toString(16).padStart(6, "0");
+  const WHITE = 0xf4f4f4;
+
+  // Başlangıç kombini (örnek): kırmızı bere, ay yıldızlı kırmızı tişört, kot, kırmızı şeritli beyaz spor ayakkabı.
+  const state = {
+    cat: "top", slim: false, armor: false, walk: false, spin: true, back: false, focus: "all",
+    target: { type: "region", index: 0 }, selMotif: 0, picker: false, pickerGroup: "vector",
+    g: {
+      hat: { wear: true, tpl: tplIdx("orta_serit"), colors: [dyeIdx("red"), dyeIdx("white")], motifs: [] },
+      top: { wear: true, tpl: tplIdx("duz"), colors: [dyeIdx("red")], motifs: [
+        { i: motIdx("ay_yildiz"), f: 0, x: 8, y: 6, s: 100, w: 100, h: 100, r: 0, c: [dyeIdx("white")] },
+      ] },
+      pants: { wear: true, tpl: tplIdx("duz"), colors: [dyeIdx("blue")], motifs: [] },
+      shoes: { wear: true, tpl: tplIdx("orta_serit"), colors: [dyeIdx("white"), dyeIdx("red")], motifs: [] },
+    },
+  };
+
+  // ------------------------------------------------------------- görüntü verisini çöz
+  function loadImage(src) {
+    return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src; });
+  }
+  function pixels(im) {
+    const c = document.createElement("canvas");
+    c.width = im.width; c.height = im.height;
+    const x = c.getContext("2d");
+    x.drawImage(im, 0, 0);
+    return x.getImageData(0, 0, im.width, im.height);
+  }
+  const garments = {};
+  async function decode() {
+    for (const g of D.garments) {
+      g.shadingPx = pixels(await loadImage(g.shading));
+      g.detailPx = pixels(await loadImage(g.detail));
+      g.regionPx = [];
+      for (const r of g.regions) g.regionPx.push(pixels(await loadImage(r)));
+      (garments[g.cat] ||= {})[g.variant] = g;
+    }
+    for (const m of D.motifs) {
+      m.maskPx = [];
+      for (const src of m.masks) m.maskPx.push(pixels(await loadImage(src)));
+      m.icon = motifCanvas(m, m.colors.map((rgb) => rgb), 3).toDataURL();
+    }
+  }
+
+  // ------------------------------------------------------------- doku birleştirme
+  function garmentCanvas(g, st) {
+    const cv = document.createElement("canvas");
+    cv.width = 128; cv.height = 128;
+    const ctx = cv.getContext("2d");
+    const out = ctx.createImageData(128, 128);
+    const map = g.regionPx[st.tpl].data, sh = g.shadingPx.data, de = g.detailPx.data;
+    for (let i = 0; i < 128 * 128 * 4; i += 4) {
+      if (!map[i + 3]) continue;
+      const r = map[i] - 1;
+      const ci = st.colors[r];
+      const base = ci >= 0 && ci !== undefined ? DYES[ci].rgb : WHITE;
+      const k = sh[i] / 242;
+      out.data[i] = Math.min(255, ((base >> 16) & 255) * k);
+      out.data[i + 1] = Math.min(255, ((base >> 8) & 255) * k);
+      out.data[i + 2] = Math.min(255, (base & 255) * k);
+      out.data[i + 3] = 255;
+      if (de[i + 3]) { out.data[i] = de[i]; out.data[i + 1] = de[i + 1]; out.data[i + 2] = de[i + 2]; }
+    }
+    ctx.putImageData(out, 0, 0);
+    return cv;
+  }
+  function motifCanvas(m, rgbs, scale = 1) {
+    const W = m.maskPx[0] ? m.maskPx[0].width : 4;
+    const cv = document.createElement("canvas");
+    cv.width = W * scale; cv.height = W * scale;
+    const ctx = cv.getContext("2d");
+    m.maskPx.forEach((px, ch) => {
+      ctx.fillStyle = hex(rgbs[ch] ?? 0x333333);
+      for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) if (px.data[(y * W + x) * 4 + 3]) ctx.fillRect(x * scale, y * scale, scale, scale);
+    });
+    return cv;
+  }
+
+  // ------------------------------------------------------------- 3B sahne
+  const canvas = document.getElementById("sahne");
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(30, 1, 1, 400);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4a44, 0.95));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.5);
+  sun.position.set(-30, 60, -50);
+  scene.add(sun);
+  const fill = new THREE.DirectionalLight(0xffffff, 0.18);
+  fill.position.set(40, 20, 60);
+  scene.add(fill);
+
+  // Bedrock modeli X ekseninde aynalı çizer; aynı görünüm için kök ölçeği -1.
+  const yawGroup = new THREE.Group();
+  scene.add(yawGroup);
+  const root = new THREE.Group();
+  root.scale.x = -1;
+  yawGroup.add(root);
+
+  // Gölge
+  {
+    const c = document.createElement("canvas"); c.width = c.height = 64;
+    const x = c.getContext("2d");
+    const gr = x.createRadialGradient(32, 32, 2, 32, 32, 30);
+    gr.addColorStop(0, "rgba(0,0,0,0.38)"); gr.addColorStop(1, "rgba(0,0,0,0)");
+    x.fillStyle = gr; x.fillRect(0, 0, 64, 64);
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(22, 14), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false }));
+    m.rotation.x = -Math.PI / 2; m.position.y = -0.05;
+    yawGroup.add(m);
+  }
+
+  const bones = {};
+  function makeSkeleton(slim) {
+    for (const k of Object.keys(bones)) { bones[k].parent && bones[k].parent.remove(bones[k]); delete bones[k]; }
+    const ap = slim ? 21.5 : 22;
+    const defs = [
+      ["waist", null, [0, 12, 0]], ["body", "waist", [0, 24, 0]], ["head", "body", [0, 24, 0]],
+      ["rightArm", "body", [-5, ap, 0]], ["leftArm", "body", [5, ap, 0]],
+      ["rightLeg", null, [-1.9, 12, 0]], ["leftLeg", null, [1.9, 12, 0]],
+    ];
+    for (const [name, parent, pv] of defs) {
+      const g = new THREE.Group();
+      g.userData.pivot = pv;
+      const pp = parent ? bones[parent].userData.pivot : [0, 0, 0];
+      g.position.set(pv[0] - pp[0], pv[1] - pp[1], pv[2] - pp[2]);
+      (parent ? bones[parent] : root).add(g);
+      bones[name] = g;
+    }
+  }
+
+  function quad(arr, uv, P, UVs) {
+    const idx = [0, 1, 2, 0, 2, 3];
+    for (const k of idx) { arr.push(...P[k]); uv.push(...UVs[k]); }
+  }
+  // Kutu-UV yönelimi (garment.mjs facePoint ile aynı)
+  function facePoint(p, face, u, v) {
+    const [x0, y0, z0] = p.from, [x1, y1, z1] = p.to;
+    const L = (a, b, t) => a + (b - a) * t;
+    switch (face) {
+      case "north": return [L(x0, x1, u), L(y1, y0, v), z0];
+      case "south": return [L(x1, x0, u), L(y1, y0, v), z1];
+      case "east": return [x0, L(y1, y0, v), L(z1, z0, u)];
+      case "west": return [x1, L(y1, y0, v), L(z0, z1, u)];
+      case "up": return [L(x0, x1, u), y1, L(z1, z0, v)];
+      case "down": return [L(x0, x1, u), y0, L(z0, z1, v)];
+    }
+  }
+  function partGeometry(g, pi, pivot) {
+    const pos = [], uv = [];
+    for (const f of g.faces) {
+      if (f.part !== pi) continue;
+      const corners = [[0, 0], [1, 0], [1, 1], [0, 1]];
+      const P = corners.map(([u, v]) => { const q = facePoint(g.parts[pi], f.face, u, v); return [q[0] - pivot[0], q[1] - pivot[1], q[2] - pivot[2]]; });
+      const UV = corners.map(([u, v]) => [(f.x + u * f.w) / 128, 1 - (f.y + v * f.h) / 128]);
+      quad(pos, uv, P, UV);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+    geo.computeVertexNormals();
+    return geo;
+  }
+
+  // Manken: yalın ten, kısa saç, sade yüz.
+  const SKIN = 0xc9a27c;
+  function faceTexture() {
+    const c = document.createElement("canvas"); c.width = c.height = 8;
+    const x = c.getContext("2d");
+    x.fillStyle = hex(SKIN); x.fillRect(0, 0, 8, 8);
+    x.fillStyle = "#4a3020"; x.fillRect(0, 0, 8, 2); x.fillRect(0, 2, 1, 1); x.fillRect(7, 2, 1, 1);
+    x.fillStyle = "#ffffff"; x.fillRect(1, 4, 2, 1); x.fillRect(5, 4, 2, 1);
+    x.fillStyle = "#3b5ba5"; x.fillRect(2, 4, 1, 1); x.fillRect(5, 4, 1, 1);
+    x.fillStyle = "#9c6a4c"; x.fillRect(3, 6, 2, 1);
+    const t = new THREE.CanvasTexture(c); t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestFilter;
+    return t;
+  }
+  function solidTex(top, rest, split) {
+    const c = document.createElement("canvas"); c.width = c.height = 8;
+    const x = c.getContext("2d");
+    x.fillStyle = hex(rest); x.fillRect(0, 0, 8, 8);
+    x.fillStyle = hex(top); x.fillRect(0, 0, 8, split);
+    const t = new THREE.CanvasTexture(c); t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestFilter;
+    return t;
+  }
+  let mannequin = [];
+  function buildMannequin() {
+    mannequin.forEach((m) => m.parent && m.parent.remove(m));
+    mannequin = [];
+    const lam = (opts) => new THREE.MeshLambertMaterial(opts);
+    const add = (bone, from, to, mat) => {
+      const pv = bones[bone].userData.pivot;
+      const geo = new THREE.BoxGeometry(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set((from[0] + to[0]) / 2 - pv[0], (from[1] + to[1]) / 2 - pv[1], (from[2] + to[2]) / 2 - pv[2]);
+      bones[bone].add(m); mannequin.push(m);
+    };
+    const skin = lam({ color: SKIN });
+    const hairSide = lam({ map: solidTex(0x4a3020, SKIN, 2) });
+    const hairAll = lam({ color: 0x4a3020 });
+    // BoxGeometry yüz sırası: +x, -x, +y, -y, +z, -z (ön = -z)
+    add("head", [-4, 24, -4], [4, 32, 4], [hairSide, hairSide, hairAll, skin, hairAll, lam({ map: faceTexture() })]);
+    add("body", [-4, 12, -2], [4, 24, 2], lam({ color: 0x8d99a3 }));
+    const aw = state.slim ? 3 : 4;
+    add("rightArm", [-4 - aw, state.slim ? 11.5 : 12, -2], [-4, state.slim ? 23.5 : 24, 2], skin);
+    add("leftArm", [4, state.slim ? 11.5 : 12, -2], [4 + aw, state.slim ? 23.5 : 24, 2], skin);
+    add("rightLeg", [-3.9, 0, -2], [0.1, 12, 2], lam({ color: 0x55606b }));
+    add("leftLeg", [-0.1, 0, -2], [3.9, 12, 2], lam({ color: 0x55606b }));
+  }
+
+  const garmentMeshes = {};
+  const motifMeshes = {};
+  function variantOf(cat) { return cat === "top" && state.slim ? garments.top.s : garments[cat].std; }
+
+  function buildGarment(cat) {
+    (garmentMeshes[cat] || []).forEach((m) => m.parent && m.parent.remove(m));
+    garmentMeshes[cat] = [];
+    const st = state.g[cat];
+    if (!st.wear) { buildMotifs(cat); return; }
+    const g = variantOf(cat);
+    const tex = new THREE.CanvasTexture(garmentCanvas(g, st));
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter; tex.generateMipmaps = false;
+    const mat = new THREE.MeshLambertMaterial({ map: tex, alphaTest: 0.5, side: THREE.DoubleSide });
+    g.parts.forEach((p, pi) => {
+      if (p.hide.length && state.armor) return;
+      if (p.under && state.g.top.wear) return;
+      const bone = bones[p.bone];
+      const mesh = new THREE.Mesh(partGeometry(g, pi, bone.userData.pivot), mat);
+      bone.add(mesh);
+      garmentMeshes[cat].push(mesh);
+    });
+    buildMotifs(cat);
+  }
+
+  // Motif sınırları: oyundaki Molang hesabıyla aynı (yüzey içinde kalır).
+  function motifFit(m, surf, size) {
+    const r = (m.r * Math.PI) / 180, ca = Math.abs(Math.cos(r)), sa = Math.abs(Math.sin(r));
+    const kx = m.w / 100, ky = m.h / 100;
+    const hx = (size / 2) * (kx * ca + ky * sa), hy = (size / 2) * (kx * sa + ky * ca);
+    return { oa: (m.x / 7.5 - 1) * Math.max(0, surf.A / 2 - hx), ob: (1 - m.y / 7.5) * Math.max(0, surf.B / 2 - hy) };
+  }
+  function surfOf(g, f) {
+    const s = g.surfaces[f];
+    return { ...s, A: s.a[1] - s.a[0], B: s.b[1] - s.b[0] };
+  }
+  function buildMotifs(cat) {
+    (motifMeshes[cat] || []).forEach((m) => m.parent && m.parent.remove(m));
+    motifMeshes[cat] = [];
+    const st = state.g[cat];
+    if (!st.wear) return;
+    const g = variantOf(cat);
+    st.motifs.forEach((m, mi) => {
+      const md = D.motifs[m.i];
+      const s = surfOf(g, m.f);
+      if (state.armor) return;
+      const tex = new THREE.CanvasTexture(motifCanvas(md, m.c.map((ci) => DYES[ci].rgb)));
+      tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter; tex.generateMipmaps = false;
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshLambertMaterial({ map: tex, alphaTest: 0.5, side: THREE.DoubleSide }));
+      const { oa, ob } = motifFit(m, s, g.motifSize);
+      const ca = (s.a[0] + s.a[1]) / 2, cb = (s.b[0] + s.b[1]) / 2;
+      const out = s.face === "north" || s.face === "east" ? -1 : 1;
+      const d = s.plane + out * (g.motifBase + g.motifStep * mi);
+      const pv = bones[s.bone].userData.pivot;
+      let p, rotY;
+      if (s.face === "north") { p = [ca + oa, cb + ob, d]; rotY = 0; }
+      else if (s.face === "south") { p = [ca - oa, cb + ob, d]; rotY = Math.PI; }
+      else if (s.face === "east") { p = [d, cb + ob, ca - oa]; rotY = Math.PI / 2; }
+      else { p = [d, cb + ob, ca + oa]; rotY = -Math.PI / 2; }
+      mesh.position.set(p[0] - pv[0], p[1] - pv[1], p[2] - pv[2]);
+      mesh.rotation.set(0, rotY, (-m.r * Math.PI) / 180, "YXZ");
+      mesh.scale.set(g.motifSize * m.w / 100, g.motifSize * m.h / 100, 1);
+      bones[s.bone].add(mesh);
+      motifMeshes[cat].push(mesh);
+    });
+  }
+  function rebuildAll() {
+    makeSkeleton(state.slim);
+    buildMannequin();
+    for (const c of CATS) buildGarment(c.id);
+  }
+
+  // ------------------------------------------------------------- kamera ve etkileşim
+  const FOCUS = { all: [17, 92], hat: [29.5, 34], top: [18, 46], pants: [7, 46], shoes: [2.2, 30] };
+  let camY = 17, camD = 92, tgtY = 17, tgtD = 92, yaw = -0.45, dragging = false, lastX = 0, pinch = 0;
+  function resize() {
+    const r = canvas.getBoundingClientRect();
+    renderer.setSize(r.width, r.height, false);
+    camera.aspect = r.width / Math.max(1, r.height);
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener("resize", resize);
+  canvas.addEventListener("pointerdown", (e) => { dragging = true; lastX = e.clientX; canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener("pointermove", (e) => { if (!dragging) return; yaw += (e.clientX - lastX) * 0.012; lastX = e.clientX; });
+  canvas.addEventListener("pointerup", () => { dragging = false; });
+  canvas.addEventListener("pointercancel", () => { dragging = false; });
+  canvas.addEventListener("wheel", (e) => { e.preventDefault(); tgtD = Math.max(22, Math.min(130, tgtD * (e.deltaY > 0 ? 1.1 : 0.9))); }, { passive: false });
+  canvas.addEventListener("touchmove", (e) => {
+    if (e.touches.length !== 2) return;
+    const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+    if (pinch) tgtD = Math.max(22, Math.min(130, tgtD * (pinch / d)));
+    pinch = d;
+  }, { passive: true });
+  canvas.addEventListener("touchend", () => { pinch = 0; });
+
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduced) { state.spin = false; }
+  let t = 0;
+  function frame() {
+    t += 1 / 60;
+    if (state.spin && !dragging) yaw += 0.006;
+    camY += (tgtY - camY) * 0.12; camD += (tgtD - camD) * 0.12;
+    yawGroup.rotation.y = yaw + (state.back ? Math.PI : 0);
+    camera.position.set(0, camY + camD * 0.12, -camD);
+    camera.lookAt(0, camY, 0);
+    const sw = state.walk ? Math.sin(t * 5) * 0.55 : 0;
+    if (bones.rightLeg) {
+      bones.rightLeg.rotation.x = sw; bones.leftLeg.rotation.x = -sw;
+      bones.rightArm.rotation.x = -sw * 0.8; bones.leftArm.rotation.x = sw * 0.8;
+    }
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+
+  // ------------------------------------------------------------- arayüz
+  const $ = (id) => document.getElementById(id);
+  function press(btn, on) { btn.setAttribute("aria-pressed", on ? "true" : "false"); }
+  $("tDon").onclick = () => { state.spin = !state.spin; press($("tDon"), state.spin); };
+  $("tYuru").onclick = () => { state.walk = !state.walk; press($("tYuru"), state.walk); };
+  $("tZirh").onclick = () => { state.armor = !state.armor; press($("tZirh"), state.armor); for (const c of CATS) buildGarment(c.id); };
+  $("tInce").onclick = () => { state.slim = !state.slim; press($("tInce"), state.slim); rebuildAll(); };
+  $("tArka").onclick = () => { state.back = !state.back; press($("tArka"), state.back); };
+  document.querySelectorAll("[data-focus]").forEach((b) => b.onclick = () => setFocus(b.dataset.focus));
+  function setFocus(f) {
+    state.focus = f;
+    [tgtY, tgtD] = FOCUS[f];
+    document.querySelectorAll("[data-focus]").forEach((b) => press(b, b.dataset.focus === f));
+  }
+
+  function renderTabs() {
+    $("sekmeler").innerHTML = "";
+    for (const c of CATS) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "tab"; b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", c.id === state.cat ? "true" : "false");
+      b.innerHTML = `${c.name}<span class="on ${state.g[c.id].wear ? "worn" : ""}">${state.g[c.id].wear ? "giyili" : "çıkarıldı"}</span>`;
+      b.onclick = () => { state.cat = c.id; state.target = { type: "region", index: 0 }; state.selMotif = state.g[c.id].motifs.length ? 0 : -1; state.picker = false; setFocus(c.id); renderPanel(); };
+      $("sekmeler").appendChild(b);
+    }
+  }
+
+  function renderPanel() {
+    renderTabs();
+    const cat = state.cat, st = state.g[cat], g = variantOf(cat);
+    $("sekilAdi").textContent = g.name;
+    $("giy").checked = st.wear;
+    $("sekilNot").textContent = `${CATS.find((c) => c.id === cat).name} kategorisindeki 25 şeklin ilk prototipi. ${g.surfaces.length} motif yüzeyi var.`;
+    const sel = $("sablon");
+    sel.innerHTML = TPL.map((tp, i) => `<option value="${i}" ${i === st.tpl ? "selected" : ""}>${tp.name} · ${tp.regions} bölge</option>`).join("");
+    // bölgeler
+    const n = TPL[st.tpl].regions;
+    st.colors.length = n;
+    for (let r = 0; r < n; r++) if (st.colors[r] === undefined) st.colors[r] = -1;
+    $("bolgeler").innerHTML = "";
+    for (let r = 0; r < n; r++) {
+      const b = document.createElement("button");
+      const ci = st.colors[r];
+      b.type = "button";
+      b.className = "chip" + (ci < 0 ? " empty" : "") + (state.target.type === "region" && state.target.index === r ? " sel" : "");
+      if (ci >= 0) b.style.background = hex(DYES[ci].rgb);
+      b.title = `Bölge ${r + 1}: ${ci >= 0 ? DYES[ci].name : "boş (beyaz kalır)"}`;
+      b.setAttribute("aria-label", b.title);
+      b.innerHTML = `<span>${r + 1}</span>`;
+      b.onclick = () => { state.target = { type: "region", index: r }; renderPanel(); };
+      $("bolgeler").appendChild(b);
+    }
+    renderTarget();
+    renderMotifs();
+    renderCost();
+  }
+
+  function renderTarget() {
+    const st = state.g[state.cat];
+    let txt;
+    if (state.target.type === "region") txt = `→ <b>Bölge ${state.target.index + 1}</b>`;
+    else {
+      const m = st.motifs[state.selMotif];
+      txt = m ? `→ <b>${D.motifs[m.i].name}, renk ${state.target.index + 1}</b>` : "";
+    }
+    $("hedef").innerHTML = txt;
+  }
+
+  function buildPalette() {
+    const p = $("palet");
+    const empty = document.createElement("button");
+    empty.type = "button"; empty.className = "dye empty"; empty.title = "Boş (beyaz kalır)"; empty.setAttribute("aria-label", empty.title);
+    empty.onclick = () => applyDye(-1);
+    p.appendChild(empty);
+    DYES.forEach((d, i) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "dye"; b.style.background = hex(d.rgb); b.title = d.name; b.setAttribute("aria-label", d.name);
+      b.onclick = () => applyDye(i);
+      p.appendChild(b);
+    });
+  }
+  function applyDye(ci) {
+    const st = state.g[state.cat];
+    if (state.target.type === "region") {
+      st.colors[state.target.index] = ci;
+      buildGarment(state.cat);
+    } else {
+      const m = st.motifs[state.selMotif];
+      if (!m || ci < 0) return;
+      m.c[state.target.index] = ci;
+      buildMotifs(state.cat);
+    }
+    renderPanel();
+  }
+
+  $("sablon").onchange = (e) => {
+    const st = state.g[state.cat];
+    st.tpl = +e.target.value;
+    const n = TPL[st.tpl].regions;
+    for (let r = 0; r < n; r++) if (st.colors[r] === undefined) st.colors[r] = (r * 5 + 3) % 16;
+    state.target = { type: "region", index: 0 };
+    buildGarment(state.cat); renderPanel();
+  };
+  $("giy").onchange = (e) => { state.g[state.cat].wear = e.target.checked; for (const c of CATS) buildGarment(c.id); renderPanel(); };
+  $("rastgele").onclick = () => {
+    const st = state.g[state.cat];
+    const pool = [...DYES.keys()].sort(() => Math.random() - 0.5);
+    st.colors = st.colors.map((_, r) => pool[r % pool.length]);
+    buildGarment(state.cat); renderPanel();
+  };
+  $("bosalt").onclick = () => { const st = state.g[state.cat]; st.colors = st.colors.map(() => -1); buildGarment(state.cat); renderPanel(); };
+
+  // motif listesi ve düzenleyici
+  function limitFor(m, g) {
+    const md = D.motifs[m.i];
+    const [lo, hi] = RULES[md.kind];
+    const s = surfOf(g, m.f);
+    const r = (m.r * Math.PI) / 180, ca = Math.abs(Math.cos(r)), sa = Math.abs(Math.sin(r));
+    const S0 = g.motifSize;
+    if (md.kind === "shape") {
+      const ky = m.h / 100, kx = m.w / 100;
+      const wMax = Math.min(ca > 1e-6 ? (s.A / S0 - ky * sa) / ca : Infinity, sa > 1e-6 ? (s.B / S0 - ky * ca) / sa : Infinity);
+      const hMax = Math.min(sa > 1e-6 ? (s.A / S0 - kx * ca) / sa : Infinity, ca > 1e-6 ? (s.B / S0 - kx * sa) / ca : Infinity);
+      return { lo, wHi: Math.max(lo, Math.min(hi, Math.floor(wMax * 100))), hHi: Math.max(lo, Math.min(hi, Math.floor(hMax * 100))) };
+    }
+    const k = Math.min(s.A, s.B) / (S0 * (ca + sa));
+    return { lo, hi: Math.max(lo, Math.min(hi, Math.floor(k * 100))) };
+  }
+  function clampMotif(m, g) {
+    const md = D.motifs[m.i], L = limitFor(m, g);
+    if (md.kind === "shape") { m.w = Math.max(L.lo, Math.min(L.wHi, m.w)); m.h = Math.max(L.lo, Math.min(L.hHi, m.h)); }
+    else { m.s = Math.max(L.lo, Math.min(L.hi, m.s)); m.w = m.h = m.s; }
+  }
+  function renderMotifs() {
+    const cat = state.cat, st = state.g[cat], g = variantOf(cat);
+    $("motifSay").textContent = `${st.motifs.length}/16`;
+    $("motifEkle").disabled = st.motifs.length >= 16;
+    const list = $("motifListe");
+    list.innerHTML = st.motifs.length ? "" : `<p class="hint">Bu giysiye motif eklenmedi. Boyut ve açısı uygun motiflerde ayarlanabilir; konum her motifte kaydırılabilir.</p>`;
+    st.motifs.forEach((m, mi) => {
+      const md = D.motifs[m.i];
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "mrow" + (mi === state.selMotif ? " sel" : "");
+      b.innerHTML = `<img alt="" src="${md.icon}"><span class="name">${md.name}<small>${g.surfaces[m.f].name} · %${md.kind === "shape" ? m.w + "×" + m.h : m.s} · ${m.r}°</small></span><span class="hint">${mi + 1}</span>`;
+      b.onclick = () => { state.selMotif = mi; state.target = { type: "motif", index: 0 }; state.picker = false; renderPanel(); };
+      list.appendChild(b);
+    });
+    renderEditor();
+  }
+
+  function slider(id, label, val, min, max, step, onInput, suffix = "") {
+    return { html: `<label class="field" for="${id}">${label} <span class="val" id="${id}V">${val}${suffix}</span><input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${val}"></label>`, id, onInput, suffix };
+  }
+  function renderEditor() {
+    const ed = $("motifEditor");
+    const cat = state.cat, st = state.g[cat], g = variantOf(cat);
+    const m = st.motifs[state.selMotif];
+    if (!m && !state.picker) { ed.hidden = true; ed.innerHTML = ""; return; }
+    ed.hidden = false;
+    if (state.picker || !m) { renderPicker(ed); return; }
+    clampMotif(m, g);
+    const md = D.motifs[m.i];
+    const rule = RULES[md.kind];
+    const L = limitFor(m, g);
+    const parts = [];
+    const sliders = [
+      slider("mx", "Sağa / sola", m.x + 1, 1, 16, 1, (v) => { m.x = v - 1; }),
+      slider("my", "Yukarı / aşağı", m.y + 1, 1, 16, 1, (v) => { m.y = v - 1; }),
+    ];
+    if (md.kind === "shape") {
+      sliders.push(slider("mw", "En", m.w, L.lo, L.wHi, rule[2], (v) => { m.w = v; }, "%"));
+      sliders.push(slider("mh", "Boy", m.h, L.lo, L.hHi, rule[2], (v) => { m.h = v; }, "%"));
+    } else sliders.push(slider("ms", `Boyut (en çok %${L.hi})`, m.s, L.lo, L.hi, rule[2], (v) => { m.s = v; m.w = m.h = v; }, "%"));
+    sliders.push(slider("mr", rule[3] === 90 ? "Açı (90° adım)" : "Açı", m.r, 0, 360 - rule[3], rule[3], (v) => { m.r = v; }, "°"));
+    const chans = m.c.map((ci, ch) => `<button type="button" class="chip ${state.target.type === "motif" && state.target.index === ch ? "sel" : ""}" data-ch="${ch}" style="background:${hex(DYES[ci].rgb)}" aria-label="Renk ${ch + 1}: ${DYES[ci].name}"><span>${ch + 1}</span></button>`).join("");
+    ed.innerHTML = `
+      <div class="editor">
+        <div class="full row" style="justify-content:space-between">
+          <span class="row"><img alt="" src="${md.icon}" style="width:32px;height:32px;image-rendering:pixelated"><b>${md.name}</b></span>
+          <span class="row"><button class="btn" type="button" id="mDegis">Motifi değiştir</button><button class="btn" type="button" id="mSil">Kaldır</button></span>
+        </div>
+        <label class="field full" for="mf">Yüzey
+          <select id="mf">${g.surfaces.map((s, i) => `<option value="${i}" ${i === m.f ? "selected" : ""}>${s.name}</option>`).join("")}</select>
+        </label>
+        ${sliders.map((s) => s.html).join("")}
+        <div class="full"><span class="hint">Renk kanalları (seç, sonra boyaya dokun)</span><div class="chips" style="margin-top:6px">${chans}</div></div>
+      </div>`;
+    for (const s of sliders) {
+      const el = $(s.id);
+      el.oninput = () => { s.onInput(+el.value); clampMotif(m, g); $(s.id + "V").textContent = el.value + s.suffix; buildMotifs(cat); renderMotifRowsOnly(); };
+      el.onchange = () => renderPanel();
+    }
+    $("mf").onchange = (e) => { m.f = +e.target.value; clampMotif(m, g); buildMotifs(cat); renderPanel(); };
+    $("mSil").onclick = () => { st.motifs.splice(state.selMotif, 1); state.selMotif = Math.min(state.selMotif, st.motifs.length - 1); state.target = { type: "region", index: 0 }; buildMotifs(cat); renderPanel(); };
+    $("mDegis").onclick = () => { state.picker = true; state.pickReplace = true; renderPanel(); };
+    ed.querySelectorAll("[data-ch]").forEach((b) => b.onclick = () => { state.target = { type: "motif", index: +b.dataset.ch }; renderPanel(); });
+  }
+  function renderMotifRowsOnly() {
+    const st = state.g[state.cat], g = variantOf(state.cat);
+    document.querySelectorAll("#motifListe .mrow").forEach((b, mi) => {
+      const m = st.motifs[mi], md = D.motifs[m.i];
+      b.querySelector("small").textContent = `${g.surfaces[m.f].name} · %${md.kind === "shape" ? m.w + "×" + m.h : m.s} · ${m.r}°`;
+    });
+  }
+  const GROUPS = [["pixel", "Minecraft ve piksel"], ["vector", "Vektör (büyür, döner)"], ["shape", "Ayarlanabilir şekiller"]];
+  function renderPicker(ed) {
+    const cat = state.cat, st = state.g[cat], g = variantOf(cat);
+    const items = D.motifs.map((m, i) => ({ m, i })).filter(({ m }) => m.kind === state.pickerGroup);
+    ed.innerHTML = `<div class="picker">
+      <div class="row" style="justify-content:space-between"><b>Motif seç</b><button class="btn" type="button" id="pKapat">Vazgeç</button></div>
+      <div class="groups">${GROUPS.map(([k, n]) => `<button type="button" class="btn ${k === state.pickerGroup ? "primary" : ""}" data-g="${k}">${n}</button>`).join("")}</div>
+      <div class="grid">${items.map(({ m, i }) => `<button type="button" data-i="${i}" title="${m.name}" aria-label="${m.name}"><img alt="" src="${m.icon}"></button>`).join("")}</div>
+    </div>`;
+    ed.querySelectorAll("[data-g]").forEach((b) => b.onclick = () => { state.pickerGroup = b.dataset.g; renderPanel(); });
+    $("pKapat").onclick = () => { state.picker = false; state.pickReplace = false; renderPanel(); };
+    ed.querySelectorAll("[data-i]").forEach((b) => b.onclick = () => {
+      const i = +b.dataset.i, md = D.motifs[i];
+      const colors = md.colors.slice(0, md.ch).map((rgb) => nearestDye(rgb));
+      if (state.pickReplace && st.motifs[state.selMotif]) {
+        const m = st.motifs[state.selMotif];
+        m.i = i; m.c = colors; m.r = 0; m.s = 100; m.w = m.h = 100;
+        clampMotif(m, g);
+      } else {
+        const m = { i, f: 0, x: 7, y: 7, s: 100, w: 100, h: 100, r: 0, c: colors };
+        clampMotif(m, g);
+        st.motifs.push(m);
+        state.selMotif = st.motifs.length - 1;
+      }
+      state.picker = false; state.pickReplace = false; state.target = { type: "motif", index: 0 };
+      buildMotifs(cat); renderPanel();
+    });
+  }
+  function nearestDye(rgb) {
+    let best = 0, bd = Infinity;
+    DYES.forEach((d, i) => {
+      const dr = ((d.rgb >> 16) & 255) - ((rgb >> 16) & 255), dg = ((d.rgb >> 8) & 255) - ((rgb >> 8) & 255), db = (d.rgb & 255) - (rgb & 255);
+      const dist = dr * dr * 2 + dg * dg * 4 + db * db * 3;
+      if (dist < bd) { bd = dist; best = i; }
+    });
+    return best;
+  }
+  $("motifEkle").onclick = () => { state.picker = true; state.pickReplace = false; renderPanel(); };
+
+  function renderCost() {
+    const need = new Array(DYES.length).fill(0);
+    for (const c of CATS) {
+      const st = state.g[c.id];
+      if (!st.wear) continue;
+      st.colors.forEach((ci) => { if (ci >= 0) need[ci]++; });
+      st.motifs.forEach((m) => m.c.forEach((ci) => need[ci]++));
+    }
+    const items = need.map((n, i) => (n ? `<li><i style="background:${hex(DYES[i].rgb)}"></i>${DYES[i].name} ×${n}</li>` : "")).join("");
+    $("maliyet").innerHTML = items || `<li>Boya gerekmiyor</li>`;
+  }
+
+  buildPalette();
+  decode().then(() => {
+    $("yukleniyor").remove();
+    rebuildAll();
+    renderPanel();
+    resize();
+    setFocus("all");
+    requestAnimationFrame(frame);
+  }).catch((e) => { $("yukleniyor").textContent = "Önizleme yüklenemedi: " + e.message; });
+})();
+</script>

@@ -159,6 +159,13 @@ export function scanPlayer(player) {
   stats.scans++;
 }
 
+// Tasarım bitince oyuncunun kendi istemcisine giyili hâli yeniden gönderir.
+export function refreshSelf(player) {
+  const s = loadState(player);
+  s.sig = "";
+  syncWorn(player, s.data, s.armor, s.slim, [player]);
+}
+
 // Görünüm tazeleme: menzile yeni giren oyuncular değişkenleri kaçırmış olabilir.
 export function resyncAll(target) {
   for (const p of world.getAllPlayers()) {
