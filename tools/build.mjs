@@ -6,11 +6,13 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { CATEGORIES, SHAPES, TEMPLATES, MOTIFS, MOTIF_RULES, ATOLYE, DYES, SETS, LIMITS, validateCatalog } from "./catalog.mjs";
 import { MOTIF_ART } from "./motif_art.mjs";
-import { PROTO_SHAPES } from "./gen/shapes_proto.mjs";
-import { TEMPLATE_FN } from "./gen/templates.mjs";
+import { SHAPE_GEN } from "./gen/shapes.mjs";
+import { TEMPLATE_FN, TP, accentOf } from "./gen/templates.mjs";
+import { buildAtlas, chartTexels, mapShape, resolveOwners, contactShade } from "./gen/atlas.mjs";
+import { checkSurfaces, SLOTS } from "./gen/slots.mjs";
 import { VECTOR_MOTIFS, rasterize } from "./gen/vector_motifs.mjs";
-import { layoutGarment, texels, buildGeometry, partBoneName, hideKeys, TEX, MOTIF_BASE, MOTIF_STEP } from "./gen/garment.mjs";
-import { detect } from "./gen/zfight.mjs";
+import { layoutGarment, texels, buildGeometry, partBoneName, hideKeys, drawGrid, MOTIF_BASE, MOTIF_STEP } from "./gen/garment.mjs";
+import { detect, overlayHideKeys, surfaceQuad, cellQuad } from "./gen/zfight.mjs";
 import { buildRender, patchPlayerEntity, DRAW_TEMPLATE, ATOLYE_TEMPLATE } from "./gen/render.mjs";
 import { renderIso, lockedIcon, pixelIcon, SAMPLE } from "./gen/icons.mjs";
 import { Canvas, shade } from "./lib/png.mjs";
@@ -45,7 +47,7 @@ const png = (base, rel, cv) => write(base, rel + ".png", cv.toPNG());
 const pad2 = (n) => String(n).padStart(2, "0");
 
 // Önizleme sayfası için toplanan veri (tools/preview.mjs kullanır).
-const preview = { garments: [], motifs: [], dyes: DYES, templates: TEMPLATES.map((t) => ({ id: t.id, name: t.name, regions: t.regions })) };
+const preview = { garments: [], motifs: [], dyes: DYES, templates: TEMPLATES.map((t) => ({ id: t.id, name: t.name, regions: t.regions, accent: accentOf(t.id) })) };
 const dataURI = (cv) => "data:image/png;base64," + cv.toPNG().toString("base64");
 
 // ---------------------------------------------------------------- doğrulama
@@ -66,28 +68,60 @@ if (errs.length) {
   console.error("Katalog hataları:\n  " + errs.join("\n  "));
   process.exit(1);
 }
+const grayOf = (s) => {
+  const g = Math.max(0, Math.min(255, Math.round(242 * (1 + s))));
+  return (g << 16) | (g << 8) | g;
+};
+const PLACEHOLDER = (() => {
+  const c = new Canvas(2, 2);
+  c.fill(0, 0, 2, 2, 0xf4f4f4);
+  return c;
+})();
 
 fs.rmSync(OUT, { recursive: true, force: true });
 
 // ---------------------------------------------------------------- giysiler
+// Her kategori tek bir atlas kullanır: şablon maskeleri kategori başına bir kez üretilir, şekil başına yalnızca
+// gölge + ayrıntı katmanı vardır (bellek: 100 şekilde ~25 MB doku).
 const built = {};
 const shapeData = {};
 const defsForCheck = [];
 const WHITE = 0xf4f4f4;
-const gray = (s) => {
-  const g = Math.max(0, Math.min(255, Math.round(242 * (1 + s))));
-  return (g << 16) | (g << 8) | g;
-};
+const SHADE_EPS = 0.015;
+preview.categories = [];
 
 for (const cat of CATEGORIES) {
   built[cat.id] = [];
   shapeData[cat.id] = [];
+  const atlas = buildAtlas(cat.id);
+  const G = { cat: cat.id, tp: TP[cat.id] };
+  const chart = [...chartTexels(atlas)];
+  const catPv = { cat: cat.id, key: cat.key, W: atlas.W, H: atlas.H, regions: [], accent: TEMPLATES.map((t) => accentOf(t.id)) };
+  const regionMaps = [];
+  TEMPLATES.forEach((tpl, ti) => {
+    const fn = TEMPLATE_FN[tpl.id];
+    const masks = Array.from({ length: tpl.regions }, () => new Canvas(atlas.W, atlas.H));
+    const map = new Canvas(atlas.W, atlas.H);
+    const rmap = new Int8Array(atlas.W * atlas.H).fill(-1);
+    for (const c of chart) {
+      const r = fn(c, G);
+      if (!(r >= 0 && r < tpl.regions)) throw new Error(`${cat.id} ${tpl.id}: geçersiz bölge ${r}`);
+      if (r > 0) masks[r].set(c.tx, c.ty, 0xffffff);
+      map.set(c.tx, c.ty, (r + 1) << 16);
+      rmap[c.ty * atlas.W + c.tx] = r;
+    }
+    for (let r = 1; r < tpl.regions; r++) png(RP, `textures/gm/mask/${cat.key}/t${pad2(ti)}_r${pad2(r)}`, masks[r]);
+    regionMaps.push(rmap);
+    catPv.regions.push(dataURI(map));
+  });
+  preview.categories.push(catPv);
+
   SHAPES[cat.id].forEach((shape, si) => {
-    const gen = PROTO_SHAPES[cat.id][si];
+    const gen = SHAPE_GEN[cat.id][si];
     const nn = pad2(si + 1);
     if (!gen) {
       png(RP, `textures/gm/ui/shape_${cat.key}${nn}`, lockedIcon());
-      shapeData[cat.id].push({ name: shape.name, style: shape.style, sets: shape.sets, built: -1, surfaces: [] });
+      shapeData[cat.id].push({ name: shape.name, style: shape.style, sets: shape.sets, built: -1, surfaces: [], drawFaces: [], draw: [] });
       return;
     }
     const defs = gen();
@@ -97,101 +131,116 @@ for (const cat of CATEGORIES) {
     for (const [vtag, def] of Object.entries(defs)) {
       const tag = vtag === "std" ? "" : "s";
       const label = `${cat.id}/${shape.name}${tag ? " (ince kol)" : ""}`;
-      const G = { cat: cat.id, trims: new Set(def.trims), tp: def.tp };
-      const layout = layoutGarment(def.parts);
+      for (const e of checkSurfaces(cat.id, def.surfaces)) errs.push(`${label}: ${e}`);
+      const layout = mapShape(atlas, cat.id, def.parts, !!def.slim);
+      if (layout.report.moved.length) report.adaptations.push(`${label}: ${layout.report.moved.length} yüz serbest alana taşındı (${layout.report.moved.slice(0, 4).join(", ")}${layout.report.moved.length > 4 ? "…" : ""})`);
+      if (layout.report.freeScale < 1) report.warnings.push(`${label}: serbest alan dar, aksesuar yüzleri %${Math.round(layout.report.freeScale * 100)} ölçekte`);
       const geoId = `geometry.gm.${texKey}${tag}`;
+      const drawCells = (def.drawFaces ?? []).flatMap((df, fi) => drawGrid(fi, df.s, df.cols, df.rows, df.skip));
+      // Başka bir zırha yakın kalan motif yüzeyleri ve çizim hücreleri o zırhla da gizlenir.
+      for (const c of drawCells) c.keys = overlayHideKeys(cellQuad(c), !!def.slim).replace(cat.key, "");
+      for (const s of def.surfaces) s.keys = overlayHideKeys(surfaceQuad(s, MOTIF_BASE, MOTIF_STEP, LIMITS.maxMotifs), !!def.slim).replace(cat.key, "");
       const { geo, motifGeo, drawGeo } = buildGeometry(geoId, layout, {
         cat: cat.id, surfaces: def.surfaces, motifSize: def.motifSize, maxMotifs: LIMITS.maxMotifs,
-        armPivotY: def.pivotY, drawCells: def.drawCells ?? [],
+        armPivotY: def.pivotY, bones: def.bones, drawCells, atlasW: atlas.W, atlasH: atlas.H,
       });
       write(RP, `models/entity/gm/${texKey}${tag}.geo.json`, geo);
       write(RP, `models/entity/gm/${texKey}${tag}.motif.geo.json`, motifGeo);
-      if (drawGeo) write(RP, `models/entity/gm/${texKey}${tag}.draw.geo.json`, drawGeo);
+      write(RP, `models/entity/gm/${texKey}${tag}.draw.geo.json`, drawGeo);
 
-      const all = [...texels(layout, def)].filter((c) => !c.hole);
-      for (const c of all) c.s = def.shade(c);
+      const raw = [...texels(layout, { slim: def.slim, yRef: atlas.yRef, zones: def.zones })];
+      const owners = resolveOwners(cat.id, layout, raw, !!def.slim);
       const dir = `textures/gm/cloth/${texKey}${tag}`;
-      const base = new Canvas(TEX, TEX), baseS = new Canvas(TEX, TEX), shadeC = new Canvas(TEX, TEX), detail = new Canvas(TEX, TEX);
-      for (const c of all) {
-        base.set(c.tx, c.ty, WHITE);
-        baseS.set(c.tx, c.ty, gray(c.s));
-        if (c.s < -0.015) shadeC.set(c.tx, c.ty, 0x000000, Math.min(255, Math.round(-c.s * 255)));
-        else if (c.s > 0.015) shadeC.set(c.tx, c.ty, 0xffffff, Math.min(255, Math.round(c.s * 255)));
+      const overlay = new Canvas(atlas.W, atlas.H);
+      const gray = new Canvas(atlas.W, atlas.H); // önizleme: çarpımsal gölge
+      const detail = new Canvas(atlas.W, atlas.H);
+      for (const c of owners) {
+        c.s = def.shade(c) + contactShade(layout, c);
         const d = def.detail(c);
-        if (d != null) detail.set(c.tx, c.ty, d);
+        gray.set(c.tx, c.ty, grayOf(c.s));
+        if (d != null) { overlay.set(c.tx, c.ty, d); detail.set(c.tx, c.ty, d); c.d = d; }
+        else if (c.s < -SHADE_EPS) overlay.set(c.tx, c.ty, 0x000000, Math.min(255, Math.round(-c.s * 255)));
+        else if (c.s > SHADE_EPS) overlay.set(c.tx, c.ty, 0xffffff, Math.min(255, Math.round(c.s * 255)));
       }
-      png(RP, `${dir}/base`, base);
-      png(RP, `${dir}/base_s`, baseS);
-      png(RP, `${dir}/shade`, shadeC);
-      png(RP, `${dir}/detail`, detail);
-      for (let a = 0; a < ATOLYE.clothSlots; a++) png(RP, `${dir}/atolye_${a}`, base);
+      png(RP, `${dir}/overlay`, overlay);
+      for (let a = 0; a < ATOLYE.clothSlots; a++) png(RP, `${dir}/atolye_${a}`, PLACEHOLDER);
 
-      const pv = {
-        cat: cat.id, key: cat.key, shape: si, name: shape.name, variant: tag || "std",
-        parts: layout.parts.map((p) => ({ bone: p.bone, from: p.from, to: p.to, role: p.role, hide: hideKeys(cat.id, p), under: !!p.under })),
-        faces: layout.faces.map((f) => ({ part: f.part, face: f.face, x: f.x, y: f.y, w: f.w, h: f.h })),
-        shading: dataURI(baseS), detail: dataURI(detail), regions: [],
-        surfaces: def.surfaces, motifSize: def.motifSize, pivotY: def.pivotY ?? 22, motifBase: MOTIF_BASE, motifStep: MOTIF_STEP,
-        drawCells: def.drawCells ?? [],
-      };
+      // Şablon bölgelerinin bu şekilde görünürlüğü (her bölge en az birkaç dokselde görünmeli).
+      const vis = owners.filter((c) => c.visible);
+      const trimVis = vis.some((c) => c.partDef.trim);
       TEMPLATES.forEach((tpl, ti) => {
-        const override = def.templateOverrides?.[tpl.id];
-        const fn = override ?? TEMPLATE_FN[tpl.id];
-        if (override) report.adaptations.push(`${label}: "${tpl.name}" modele özel uyarlandı`);
-        const masks = Array.from({ length: tpl.regions }, () => new Canvas(TEX, TEX));
-        const map = new Canvas(TEX, TEX);
-        const seen = new Set();
-        for (const c of all) {
-          const r = fn(c, G);
-          if (!(r >= 0 && r < tpl.regions)) throw new Error(`${label} ${tpl.id}: geçersiz bölge ${r}`);
-          c.r = r;
-          seen.add(r);
-          masks[r].set(c.tx, c.ty, gray(c.s));
-          map.set(c.tx, c.ty, (r + 1) << 16);
+        const counts = new Array(tpl.regions).fill(0);
+        for (const c of vis) {
+          if (c.partDef.trim && accentOf(tpl.id) >= 0) { counts[accentOf(tpl.id)]++; continue; }
+          const r = c.faceRef.free ? 0 : regionMaps[ti][c.ty * atlas.W + c.tx];
+          if (r >= 0) counts[r]++;
         }
-        masks.forEach((m, r) => png(RP, `${dir}/t${pad2(ti)}_r${pad2(r)}`, m));
-        pv.regions.push(dataURI(map));
-        if (seen.size !== tpl.regions) report.warnings.push(`${label}: "${tpl.name}" ${seen.size}/${tpl.regions} bölge görünür — özel uyarlama gerekli`);
-        if (!tag) {
-          const iso = all.map((c) => ({ p: c.p, face: c.face, color: shade(SAMPLE[c.r], 1 + c.s) }));
-          png(RP, `textures/gm/ui/tpl_${texKey}_${pad2(ti)}`, renderIso(iso));
-          if (ti === 0) png(RP, `textures/gm/ui/shape_${texKey}`, renderIso(all.map((c) => ({ p: c.p, face: c.face, color: shade(0xdadada, 1 + c.s) }))));
-        }
+        const missing = counts.map((n, r) => (n < 3 ? r + 1 : 0)).filter(Boolean);
+        if (missing.length) report.warnings.push(`${label}: "${tpl.name}" bölge ${missing.join(",")} görünmüyor`);
       });
-      preview.garments.push(pv);
+      if (!trimVis) report.warnings.push(`${label}: kenar parçası yok ("Kenarlık" şablonu ikinci rengi gösteremez)`);
+
+      if (!tag) {
+        const iso = vis.map((c) => ({ p: c.p, face: c.face, color: c.d ?? shade(0xdadada, 1 + c.s) }));
+        png(RP, `textures/gm/ui/shape_${texKey}`, renderIso(iso));
+      }
+      preview.garments.push({
+        cat: cat.id, key: cat.key, shape: si, name: shape.name, variant: tag || "std",
+        parts: layout.parts.map((p) => ({ bone: p.bone, from: p.from, to: p.to, role: p.role, trim: !!p.trim, hide: hideKeys(cat.id, p), under: !!p.under })),
+        faces: layout.faces.map((f) => ({ part: f.part, face: f.face, x: f.x, y: f.y, w: f.w, h: f.h, free: !!f.free })),
+        bones: def.bones ?? [], shading: dataURI(gray), detail: dataURI(detail), overlay: dataURI(overlay),
+        surfaces: def.surfaces, motifSize: def.motifSize, pivotY: def.pivotY ?? 22, motifBase: MOTIF_BASE, motifStep: MOTIF_STEP,
+        drawCells, drawFaces: (def.drawFaces ?? []).map((d) => ({ name: d.name, cols: d.cols, rows: d.rows })),
+      });
       const boneRules = {};
+      const trimBones = {};
       for (const p of def.parts) {
         const keys = hideKeys(cat.id, p);
-        if (keys.length || p.under) boneRules[partBoneName(cat.id, p)] = { keys, under: !!p.under };
+        const b = partBoneName(cat.id, p);
+        if (keys.length || p.under) boneRules[b] = { keys, under: !!p.under };
+        if (p.trim) trimBones[b] = { keys, under: !!p.under };
       }
-      variants.push({ tag, geoId, surfaces: def.surfaces, boneRules, drawCells: def.drawCells });
-      defsForCheck.push({ cat: cat.id, variant: vtag, def });
-      if (!first) first = def;
+      variants.push({ tag, geoId, surfaces: def.surfaces, boneRules, trimBones, drawCells: drawCells.map((c, n) => ({ n, keys: c.keys })), bones: def.bones ?? [] });
+      defsForCheck.push({ cat: cat.id, shape: si, variant: vtag, def, layout, drawCells });
+      if (!first) first = { def, drawCells };
     }
+    const fd = first.def;
     shapeData[cat.id].push({
       name: shape.name, style: shape.style, sets: shape.sets, built: built[cat.id].length,
-      motifSize: first.motifSize,
-      surfaces: first.surfaces.map((s) => ({ name: s.name, A: +(s.a[1] - s.a[0]).toFixed(3), B: +(s.b[1] - s.b[0]).toFixed(3) })),
-      draw: first.drawCells ? first.drawCells.map((c) => [c.face === "north" ? 0 : 1, c.row, c.col]) : null,
+      motifSize: fd.motifSize,
+      surfaces: fd.surfaces.map((s) => ({ name: s.name, slot: s.slot, A: +(s.a[1] - s.a[0]).toFixed(3), B: +(s.b[1] - s.b[0]).toFixed(3) })),
+      drawFaces: (fd.drawFaces ?? []).map((d) => ({ name: d.name, cols: d.cols, rows: d.rows })),
+      draw: first.drawCells.map((c) => [c.faceIndex, c.row, c.col]),
     });
-    built[cat.id].push({ texKey, variants, motifSize: first.motifSize });
+    built[cat.id].push({ texKey, variants, motifSize: fd.motifSize });
   });
+}
+if (errs.length) {
+  console.error("Şekil hataları:\n  " + errs.join("\n  "));
+  process.exit(1);
 }
 
 // ---------------------------------------------------------------- çakışma (titreme) denetimi
+// Her kategoriden tüm şekiller, diğer kategorilerin her şekliyle birlikte değil, kendi kategorisinin zırhı,
+// skin ve diğer kategorilerin en kalabalık şekilleriyle denenir.
 {
-  const pick = (cat, v) => defsForCheck.filter((d) => d.cat === cat && (d.variant === v || (v === "slim" && d.variant === "std" && !defsForCheck.some((x) => x.cat === cat && x.variant === "slim"))));
-  const scen = [
-    ["hepsi, standart kol", ["hat", "top", "pants", "shoes"], "std", false],
-    ["hepsi, ince kol", ["hat", "top", "pants", "shoes"], "slim", true],
-    ["üst yok", ["hat", "pants", "shoes"], "std", false],
-  ];
   let n = 0;
-  for (const [name, cats, v, slim] of scen) {
-    const gs = cats.flatMap((c) => pick(c, v).slice(0, 1));
-    for (const i of detect(gs, slim, MOTIF_BASE, MOTIF_STEP)) {
-      report.warnings.push(`çakışma (${name}): ${i.a} ↔ ${i.b} — aralık ${i.gap}`);
-      n++;
+  const seen = new Set();
+  const byCat = (c) => defsForCheck.filter((d) => d.cat === c);
+  for (const d of defsForCheck) {
+    const slim = d.variant === "slim";
+    const others = ["hat", "top", "pants", "shoes"].filter((c) => c !== d.cat).map((c) => {
+      const list = byCat(c).filter((x) => (c === "top" ? x.variant === (slim ? "slim" : "std") : true));
+      return list[0];
+    }).filter(Boolean);
+    for (const set of [[d, ...others], [d, ...others.filter((o) => o.cat !== "top")]]) {
+      for (const i of detect(set.map((x) => ({ cat: x.cat, def: x.def, layout: x.layout, drawCells: x.drawCells })), slim, MOTIF_BASE, MOTIF_STEP)) {
+        const key = `${i.a} ↔ ${i.b}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        report.warnings.push(`çakışma: ${key} — aralık ${i.gap}`);
+        n++;
+      }
     }
   }
   report.counts.zfight = n;
@@ -619,7 +668,7 @@ png(RP, "pack_icon", icon);
 const dataModule = {
   CATEGORIES: CATEGORIES.map(({ id, key, name, baseItem, item }) => ({ id, key, name, baseItem, item })),
   SHAPES: shapeData,
-  TEMPLATES, SETS, LIMITS, MOTIF_RULES, ATOLYE,
+  TEMPLATES: TEMPLATES.map((t) => ({ ...t, accent: accentOf(t.id) })), SETS, LIMITS, MOTIF_RULES, ATOLYE,
   MOTIFS: MOTIFS.map(({ id, name, ch, kind }) => ({ id, name, ch, kind })),
   DRAW_TEMPLATE, ATOLYE_TEMPLATE,
   DYES: DYES.map(({ id, name, rgb }) => ({ id, name, rgb })),

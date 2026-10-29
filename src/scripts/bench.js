@@ -298,7 +298,7 @@ async function editorLoop(sess) {
 
 function templateChoices(sess) {
   const list = DATA.TEMPLATES.map((t, i) => ({ tpl: i, label: `${t.name} · ${t.regions} bölge` }));
-  if (shapeOf(sess).draw) list.push({ tpl: DATA.DRAW_TEMPLATE, label: "Çizim (oyun içi fırça)" });
+  if (shapeOf(sess).draw?.length) list.push({ tpl: DATA.DRAW_TEMPLATE, label: "Çizim (oyun içi fırça)" });
   for (const k of clothSlotsFor(sess.cat.id, sess.shape)) list.push({ tpl: DATA.ATOLYE_TEMPLATE + k.slot, label: `Atölye: ${k.ad}` });
   return list;
 }
@@ -526,15 +526,19 @@ async function motifEdit(sess, idx) {
 }
 
 // ------------------------------------------------------------ oyun içi çizim
+// Şeklin çizim yüzleri (ör. gövde önü/arkası, bacaklar, şapka yanları) ayrı ızgaralardır; her hücre bir boya rengi.
 function drawGrid(sess, face, cur, size) {
-  const cells = shapeOf(sess).draw;
+  const sh = shapeOf(sess);
+  const F = sh.drawFaces[face];
+  const index = new Map();
+  sh.draw.forEach((c, n) => { if (c[0] === face) index.set(c[1] * 100 + c[2], n); });
   const lines = [];
-  for (let row = 0; row < 12; row++) {
+  for (let row = 0; row < F.rows; row++) {
     let line = "";
-    for (let col = 0; col < 8; col++) {
-      const n = cells.findIndex((c) => c[0] === face && c[1] === row && c[2] === col);
+    for (let col = 0; col < F.cols; col++) {
+      const n = index.get(row * 100 + col);
       const inBrush = row >= cur.row && row < cur.row + size && col >= cur.col && col < cur.col + size;
-      if (n < 0) { line += "§8 ·"; continue; }
+      if (n === undefined) { line += "§8 ·"; continue; }
       const v = parseInt(sess.draw[n] ?? "0", 17) || 0;
       const glyph = inBrush ? "▣" : "█";
       line += v ? `${DYE_TEXT[v - 1]}${glyph}` : inBrush ? "§f▣" : "§7░";
@@ -556,29 +560,41 @@ function paint(sess, face, cur, size, value) {
 
 async function drawScreen(sess) {
   const p = sess.player;
-  if (!shapeOf(sess).draw) return;
+  const sh = shapeOf(sess);
+  if (!sh.draw?.length) return;
   const have = countDyes(p);
   const f = new CustomForm(p, "Çizim fırçası");
   const faceObs = new ObservableNumber(0, { clientWritable: true });
   const colObs = new ObservableNumber(1, { clientWritable: true });
   const rowObs = new ObservableNumber(1, { clientWritable: true });
+  const colMax = new ObservableNumber(sh.drawFaces[0].cols);
+  const rowMax = new ObservableNumber(sh.drawFaces[0].rows);
   const colorObs = new ObservableNumber(14, { clientWritable: true });
   const sizeObs = new ObservableNumber(0, { clientWritable: true });
   const grid = new ObservableString("");
   const cur = () => ({ row: rowObs.getData() - 1, col: colObs.getData() - 1 });
   const redraw = () => grid.setData(drawGrid(sess, faceObs.getData(), cur(), sizeObs.getData() + 1));
-  f.label("Skin pikseli çözünürlüğünde (gövde önü 8×12) çizim. Her farklı renk bir boya tüketir.");
-  f.dropdown("Yüz", faceObs, [{ label: "Ön", value: 0 }, { label: "Arka", value: 1 }]);
+  f.label("Skin pikseli çözünürlüğünde çizim. Her farklı renk bir boya tüketir.");
+  f.dropdown("Yüz", faceObs, sh.drawFaces.map((d, i) => ({ label: `${d.name} (${d.cols}×${d.rows})`, value: i })));
   f.label(grid);
-  f.slider("Sütun", colObs, 1, 8, { step: 1 });
-  f.slider("Satır", rowObs, 1, 12, { step: 1 });
+  f.slider("Sütun", colObs, 1, colMax, { step: 1 });
+  f.slider("Satır", rowObs, 1, rowMax, { step: 1 });
   f.dropdown("Fırça rengi", colorObs, dyeItems(have, null));
   f.dropdown("Fırça boyu", sizeObs, [{ label: "1×1", value: 0 }, { label: "2×2", value: 1 }, { label: "3×3", value: 2 }]);
-  for (const o of [faceObs, colObs, rowObs, sizeObs]) o.subscribe(() => system.run(redraw));
+  faceObs.subscribe(() => system.run(() => {
+    const F = sh.drawFaces[faceObs.getData()];
+    colMax.setData(F.cols);
+    rowMax.setData(F.rows);
+    if (colObs.getData() > F.cols) colObs.setData(F.cols);
+    if (rowObs.getData() > F.rows) rowObs.setData(F.rows);
+    redraw();
+  }));
+  for (const o of [colObs, rowObs, sizeObs]) o.subscribe(() => system.run(redraw));
+  const whole = () => Math.max(...sh.drawFaces.map((d) => Math.max(d.cols, d.rows)));
   f.button("§2Boya", () => { paint(sess, faceObs.getData(), cur(), sizeObs.getData() + 1, colorObs.getData() + 1); redraw(); });
   f.button("Sil", () => { paint(sess, faceObs.getData(), cur(), sizeObs.getData() + 1, 0); redraw(); });
-  f.button("Bu yüzü tümüyle boya", () => { paint(sess, faceObs.getData(), { row: 0, col: 0 }, 12, colorObs.getData() + 1); redraw(); });
-  f.button("Bu yüzü temizle", () => { paint(sess, faceObs.getData(), { row: 0, col: 0 }, 12, 0); redraw(); });
+  f.button("Bu yüzü tümüyle boya", () => { paint(sess, faceObs.getData(), { row: 0, col: 0 }, whole(), colorObs.getData() + 1); redraw(); });
+  f.button("Bu yüzü temizle", () => { paint(sess, faceObs.getData(), { row: 0, col: 0 }, whole(), 0); redraw(); });
   f.button("Geri", () => f.close());
   f.closeButton();
   redraw();

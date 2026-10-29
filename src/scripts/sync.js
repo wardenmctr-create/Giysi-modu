@@ -14,12 +14,33 @@ export function renderMode() {
   return world.getDynamicProperty("gm:mod") === 1 ? 1 : 0;
 }
 
+// Boyanmamış bölge beyaz kumaştır.
+const UNDYED = 0xf4f4f4;
+const regionRgb = (c) => (c >= 0 && c < DATA.DYES.length ? DATA.DYES[c].rgb : UNDYED);
+
+// Motifin yüzey içindeki ötelemesi (birim): konum 0..15, yüzey ölçüsü ve dönmeye göre taşmadan.
+export function motifOffset(shape, mo) {
+  const s = shape.surfaces[mo.f] ?? shape.surfaces[0];
+  const S0 = shape.motifSize;
+  const r = ((mo.r ?? 0) * Math.PI) / 180;
+  const ca = Math.abs(Math.cos(r)), sa = Math.abs(Math.sin(r));
+  const kx = (mo.w ?? mo.s ?? 100) / 100, ky = (mo.h ?? mo.s ?? 100) / 100;
+  const hx = (S0 / 2) * (kx * ca + ky * sa), hy = (S0 / 2) * (kx * sa + ky * ca);
+  const u = (mo.x / 7.5 - 1) * Math.max(0, s.A / 2 - hx);
+  const v = (1 - mo.y / 7.5) * Math.max(0, s.B / 2 - hy);
+  return { slot: s.slot, u: Math.round(u * 1000) / 1000, v: Math.round(v * 1000) / 1000 };
+}
+
 export function clothAssignments(catKey, d) {
   const p = `v.gm${catKey}`;
   if (!d) return [`${p}s=0`];
   const shape = DATA.SHAPES[d.cat][d.shape];
   const out = [`${p}s=${shape.built + 1}`, `${p}t=${d.tpl}`];
-  for (let r = 0; r < DATA.LIMITS.maxRegions; r++) out.push(`${p}k${r}=${dyeRgb(d.colors?.[r] ?? -1)}`);
+  const tpl = d.tpl < DATA.TEMPLATES.length ? DATA.TEMPLATES[d.tpl] : null;
+  const regions = tpl ? tpl.regions : 1;
+  for (let r = 0; r < DATA.LIMITS.maxRegions; r++) out.push(`${p}k${r}=${r < regions ? regionRgb(d.colors?.[r] ?? -1) : 0}`);
+  // Kenar parçalarının rengi (şablona göre ana renk, ikinci renk ya da yerinde desen).
+  out.push(`${p}e=${tpl && tpl.accent >= 0 && tpl.accent < regions ? regionRgb(d.colors?.[tpl.accent] ?? -1) : 0}`);
   for (let m = 0; m < DATA.LIMITS.maxMotifs; m++) {
     const mo = d.motifs?.[m];
     if (!mo) {
@@ -27,12 +48,13 @@ export function clothAssignments(catKey, d) {
       continue;
     }
     const w = mo.w ?? mo.s ?? 100, h = mo.h ?? mo.s ?? 100;
-    out.push(`${p}m${m}i=${mo.i + 1}`, `${p}m${m}f=${mo.f}`, `${p}m${m}x=${mo.x}`, `${p}m${m}y=${mo.y}`, `${p}m${m}w=${w}`, `${p}m${m}h=${h}`, `${p}m${m}r=${mo.r ?? 0}`);
+    const o = motifOffset(shape, mo);
+    out.push(`${p}m${m}i=${mo.i + 1}`, `${p}m${m}f=${o.slot}`, `${p}m${m}u=${o.u}`, `${p}m${m}v=${o.v}`, `${p}m${m}w=${w}`, `${p}m${m}h=${h}`, `${p}m${m}r=${mo.r ?? 0}`);
     for (let ch = 0; ch < 3; ch++) out.push(`${p}m${m}${MCH[ch]}=${dyeRgb(mo.c?.[ch] ?? -1)}`);
   }
   // Oyun içi çizim hücreleri: 0 boş, 1..16 boya
   const cells = shape.draw;
-  if (cells && d.tpl === DATA.DRAW_TEMPLATE) {
+  if (cells?.length && d.tpl === DATA.DRAW_TEMPLATE) {
     const code = d.draw ?? "";
     for (let n = 0; n < cells.length; n++) out.push(`${p}d${n}=${parseInt(code[n] ?? "0", 17) || 0}`);
   }

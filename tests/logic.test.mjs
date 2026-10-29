@@ -348,3 +348,33 @@ test("veri aktarımı: taslak yalnızca tasarlayana, giyili hâl diğerlerine gi
   assert.ok(!isDesigning(p));
   for (const a of p.animations) assert.ok(a.stopExpression.endsWith("return 1;") && a.stopExpression.length < 1500);
 });
+
+test("veri aktarımı: boş bölge beyaz, kenar vurgusu şablona göre, motif ötelemesi yüzey içinde", async () => {
+  const { clothAssignments, motifOffset } = await import(S + "sync.js");
+  const tplIndex = (id) => DATA.TEMPLATES.findIndex((t) => t.id === id);
+  const val = (list, name) => Number(list.find((a) => a.startsWith(`${name}=`)).split("=")[1]);
+  const shape = DATA.SHAPES.top.findIndex((s) => s.built >= 0);
+  const RED = DATA.DYES[D("red")].rgb, BLUE = DATA.DYES[D("blue")].rgb;
+  // Kenarlık: kenarlar 2. bölgenin rengini alır
+  let a = clothAssignments("t", { cat: "top", shape, tpl: tplIndex("kenarlik"), colors: [D("red"), D("blue")], motifs: [] });
+  assert.equal(val(a, "v.gmtk0"), RED);
+  assert.equal(val(a, "v.gmtk1"), BLUE);
+  assert.equal(val(a, "v.gmtk2"), 0, "şablonda olmayan bölge çizilmez");
+  assert.equal(val(a, "v.gmte"), BLUE);
+  // Dama: boyanmamış 1. bölge beyaz kumaş; kenarlar ana renkte (desen almaz)
+  a = clothAssignments("t", { cat: "top", shape, tpl: tplIndex("dama"), colors: [-1, D("blue")], motifs: [] });
+  assert.equal(val(a, "v.gmtk0"), 0xf4f4f4);
+  assert.equal(val(a, "v.gmte"), 0xf4f4f4);
+  // Ön–arka: kenarlar bulundukları yerin desenini izler (vurgu geçişi kapalı)
+  a = clothAssignments("t", { cat: "top", shape, tpl: tplIndex("on_arka"), colors: [D("red"), D("blue")], motifs: [] });
+  assert.equal(val(a, "v.gmte"), 0);
+  // Motif: sol üst köşe → yüzeyin sol üstüne, taşmadan
+  const sh = DATA.SHAPES.top[shape];
+  const s = sh.surfaces[0];
+  const o = motifOffset(sh, { f: 0, x: 0, y: 0, w: 100, h: 100, r: 0 });
+  assert.equal(o.slot, s.slot);
+  assert.ok(Math.abs(o.u + (s.A / 2 - sh.motifSize / 2)) < 0.01);
+  assert.ok(Math.abs(o.v - (s.B / 2 - sh.motifSize / 2)) < 0.01);
+  const big = motifOffset(sh, { f: 0, x: 15, y: 15, w: 100 * s.A / sh.motifSize, h: 100, r: 0 });
+  assert.equal(big.u, 0, "yüzeyi dolduran motif yatayda kaymaz");
+});

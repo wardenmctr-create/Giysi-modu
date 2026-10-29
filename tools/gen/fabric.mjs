@@ -47,8 +47,8 @@ export function lighting(c) {
   if (c.face === "down") s -= 0.22;
   if (c.face === "east" || c.face === "west") s -= 0.03;
   if (c.face === "south") s -= 0.02;
-  const e = c.edge * 2; // doksel cinsinden kenar uzaklığı
-  if (e < 1) s -= 0.1;
+  // Yüzün en dış doksel sırası (kutu kenarı) ince koyu hat.
+  if ((c.et ?? Math.floor(c.edge * 2)) === 0) s -= 0.1;
   return s;
 }
 

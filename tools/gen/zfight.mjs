@@ -54,12 +54,18 @@ export function vanillaQuads(slim) {
 const KEY_CAT = { h: "hat", t: "top", p: "pants", s: "shoes" };
 const CAT_KEY = { hat: "h", top: "t", pants: "p", shoes: "s" };
 
-export function garmentQuads(cat, def) {
+// layout verilirse yalnızca gerçekten çizilen yüzler (tamamen gizli olduğu için atlananlar hariç) denetlenir.
+export function garmentQuads(cat, def, layout) {
   const q = [];
   def.parts.forEach((p, pi) => {
     const hide = new Set((p.hideArmor ?? []).map((k) => KEY_CAT[k]));
     if (p.pro) hide.add(cat);
-    q.push(...boxQuads(p.from, p.to, { kind: "garment", cat, part: pi, role: p.role, pro: hide.size > 0, hide, under: !!p.under, bone: p.bone }, p.skip ?? []));
+    let skip = p.skip ?? [];
+    if (layout) {
+      const present = new Set(layout.faces.filter((f) => f.part === pi).map((f) => f.face));
+      skip = ["north", "south", "east", "west", "up", "down"].filter((f) => !present.has(f));
+    }
+    q.push(...boxQuads(p.from, p.to, { kind: "garment", cat, part: pi, role: p.role, pro: hide.size > 0, hide, under: !!p.under, bone: p.bone }, skip));
   });
   return q;
 }
@@ -72,8 +78,9 @@ export function motifQuads(cat, def, base, step, slots) {
     const rect = axis === 2 ? [s.a[0], s.a[1], s.b[0], s.b[1]] : [s.b[0], s.b[1], s.a[0], s.a[1]];
     // a ekseni: north/south için x, east/west için z; boxQuads sırası: (diğer eksenler artan) → x,y veya y,z
     const r = axis === 2 ? [s.a[0], s.a[1], s.b[0], s.b[1]] : [s.b[0], s.b[1], s.a[0], s.a[1]];
+    const hide = new Set([cat, ...[...(s.keys ?? "")].map((k) => KEY_CAT[k])]);
     for (const k of [0, slots - 1]) {
-      q.push({ axis, sign, plane: s.plane + sign * (base + k * step), rect: r, owner: { kind: "motif", cat, surface: si, name: s.name, slot: k, pro: true, hide: new Set([cat]), bone: s.bone } });
+      q.push({ axis, sign, plane: s.plane + sign * (base + k * step), rect: r, owner: { kind: "motif", cat, surface: si, name: s.name, slot: k, pro: true, hide, bone: s.bone } });
     }
     void rect;
   });
@@ -89,6 +96,7 @@ function overlap(a, b) {
 const label = (o) => {
   if (o.kind === "garment") return `${o.cat}#${o.part}(${o.role}${o.pro ? ",zırhta gizli" : ""}${o.under ? ",üst varken gizli" : ""}).${o.face}`;
   if (o.kind === "motif") return `${o.cat} motif "${o.name}" yuva ${o.slot + 1}`;
+  if (o.kind === "draw") return `${o.cat} ${o.name}`;
   return `${o.kind}${o.armor ? ":" + o.armor : ""}:${o.bone}.${o.face}`;
 };
 
@@ -105,12 +113,48 @@ function hiddenInside(quad, area, boxes) {
   return false;
 }
 
-// garments: [{ cat, def }] — aynı anda giyilenler. armorOn: zırh takılı kategori (veya null).
+// Oyun içi çizim hücreleri: motifler gibi kendi kategorisinin (ve keys'teki) zırhıyla gizlenen ince dörtgenler.
+export function drawQuads(cat, cells) {
+  return (cells ?? []).map((c) => {
+    const [axis, sign] = AXES[c.face];
+    const r = axis === 2 ? [c.x0, c.x1, c.y0, c.y1] : [c.y0, c.y1, c.x0, c.x1];
+    const hide = new Set([cat, ...[...(c.keys ?? "")].map((k) => KEY_CAT[k])]);
+    return { axis, sign, plane: c.plane, rect: r, owner: { kind: "draw", cat, name: `çizim ${c.faceIndex}:${c.row},${c.col}`, slot: 0, pro: true, hide, bone: c.bone } };
+  });
+}
+
+// İnce bir katman (motif/çizim) hangi zırhlarla gizlenmeli? Zırh yüzüne MIN_GAP'ten yakın ya da zırhın
+// dışında kalıyorsa o zırh takılınca gizlenir. quad: { axis, sign, plane(ler), rect, bone }
+export function overlayHideKeys(q, slim) {
+  const keys = new Set();
+  for (const v of vanillaQuads(slim)) {
+    if (v.owner.kind !== "armor" || v.axis !== q.axis || v.sign !== q.sign || v.owner.bone !== q.bone) continue;
+    if (!overlap(q, v)) continue;
+    const outer = Math.max(...q.planes.map((p) => p * q.sign));
+    if (v.plane * q.sign - outer < MIN_GAP) keys.add(CAT_KEY[v.owner.armor]);
+  }
+  return [...keys].sort().join("");
+}
+export function surfaceQuad(s, motifBase, motifStep, slots) {
+  const [axis, sign] = AXES[s.face];
+  const rect = axis === 2 ? [s.a[0], s.a[1], s.b[0], s.b[1]] : [s.b[0], s.b[1], s.a[0], s.a[1]];
+  return { axis, sign, rect, bone: s.bone, planes: [s.plane + sign * motifBase, s.plane + sign * (motifBase + (slots - 1) * motifStep)] };
+}
+export function cellQuad(c) {
+  const [axis, sign] = AXES[c.face];
+  const rect = axis === 2 ? [c.x0, c.x1, c.y0, c.y1] : [c.y0, c.y1, c.x0, c.x1];
+  return { axis, sign, rect, bone: c.bone, planes: [c.plane] };
+}
+
+// garments: [{ cat, def, drawCells }] — aynı anda giyilenler.
 export function detect(garments, slim, motifBase = 0.12, motifStep = 0.02) {
   const issues = [];
   const vanilla = vanillaQuads(slim);
-  const gq = garments.flatMap(({ cat, def }) => garmentQuads(cat, def));
-  const mq = garments.flatMap(({ cat, def }) => motifQuads(cat, def, motifBase, motifStep, 16));
+  const gq = garments.flatMap(({ cat, def, layout }) => garmentQuads(cat, def, layout));
+  const mq = [
+    ...garments.flatMap(({ cat, def }) => motifQuads(cat, def, motifBase, motifStep, 16)),
+    ...garments.flatMap(({ cat, drawCells }) => drawQuads(cat, drawCells)),
+  ];
   const boxes = garments.flatMap(({ cat, def }) => def.parts.map((p, pi) => ({ from: p.from, to: p.to, owner: { cat, part: pi } })));
   const topWorn = garments.some((g) => g.cat === "top");
   const visibleWith = (o, other) => {
@@ -127,7 +171,7 @@ export function detect(garments, slim, motifBase = 0.12, motifStep = 0.02) {
       if (b.owner.kind === "garment" && a.owner.kind === "garment" && b.owner.cat === a.owner.cat && b.owner.part === a.owner.part) continue;
       if (b.owner.under && topWorn) continue;
       const gap = Math.abs(a.plane - b.plane);
-      if (gap >= MIN_GAP) continue;
+      if (gap >= MIN_GAP - 1e-6) continue;
       if (!visibleWith(a.owner, b.owner)) continue;
       if (b.owner.kind === "garment" && !visibleWith(b.owner, a.owner)) continue;
       const area = overlap(a, b);
