@@ -1,0 +1,840 @@
+<title>Giysi Atölyesi</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@500;700&family=Rubik:wght@400;500;600&display=swap">
+<style>
+  /* Düzen: üstte sekmeler; solda sahne (3B ya da kalıp), sağda araçlar. Telefonda tek sütun. */
+  :root {
+    --bg: #eef1f0; --panel: #ffffff; --ink: #1b2420; --muted: #5a6964; --line: #d3dcd8;
+    --accent: #1e7a5a; --accent-ink: #ffffff; --mat: #2f5d50; --mat-line: rgba(255, 255, 255, 0.13);
+    --mat-line-strong: rgba(255, 255, 255, 0.24); --chip: #f4f6f5; --warn: #9a5b00; --danger: #b02e26;
+    --display: "Pixelify Sans", "Courier New", monospace;
+    --body: "Rubik", "Segoe UI", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111715; --panel: #18201e; --ink: #e5edea; --muted: #9aaba5; --line: #2a3633;
+      --accent: #4fbf94; --accent-ink: #0c1311; --mat: #213f36; --mat-line: rgba(255, 255, 255, 0.08);
+      --mat-line-strong: rgba(255, 255, 255, 0.16); --chip: #212b28; --warn: #f0b45a; --danger: #ff8a7a; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #111715; --panel: #18201e; --ink: #e5edea; --muted: #9aaba5; --line: #2a3633;
+    --accent: #4fbf94; --accent-ink: #0c1311; --mat: #213f36; --mat-line: rgba(255, 255, 255, 0.08);
+    --mat-line-strong: rgba(255, 255, 255, 0.16); --chip: #212b28; --warn: #f0b45a; --danger: #ff8a7a; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.45; }
+  .app { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 14px 28px; max-width: 1240px; margin: 0 auto; display: grid; gap: 14px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+  h1 { font-family: var(--display); font-weight: 700; font-size: 1.9rem; letter-spacing: 0.02em; margin: 0; }
+  header p { margin: 0; color: var(--muted); }
+  .modes { display: flex; flex-wrap: wrap; gap: 6px; }
+  .mode { font: 600 0.92rem var(--body); padding: 9px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+  .mode[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .layout { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+  @media (max-width: 900px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+  .stage { position: relative; border-radius: 10px; overflow: hidden; background-color: var(--mat);
+    background-image: linear-gradient(var(--mat-line-strong) 1px, transparent 1px), linear-gradient(90deg, var(--mat-line-strong) 1px, transparent 1px),
+      linear-gradient(var(--mat-line) 1px, transparent 1px), linear-gradient(90deg, var(--mat-line) 1px, transparent 1px);
+    background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px; aspect-ratio: 1 / 1; width: 100%; max-height: 80vh; min-height: 320px; }
+  .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  #kalip { image-rendering: pixelated; background: transparent; }
+  .stage-tools { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .top-tools { position: absolute; left: 10px; right: 10px; top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .pill { font: 500 0.84rem var(--body); color: #f2f6f4; background: rgba(10, 22, 18, 0.6); border: 1px solid rgba(255, 255, 255, 0.24); border-radius: 999px; padding: 6px 12px; cursor: pointer; }
+  .pill[aria-pressed="true"] { background: #f2f6f4; color: #14211c; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; min-width: 0; }
+  .sec { padding: 14px 16px; display: grid; gap: 10px; border-bottom: 1px solid var(--line); min-width: 0; }
+  .sec:last-child { border-bottom: 0; }
+  .sec h2 { font-family: var(--display); font-weight: 500; font-size: 1.05rem; letter-spacing: 0.03em; margin: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .hint { color: var(--muted); font-size: 0.86rem; margin: 0; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+  label.field { display: grid; gap: 4px; font-size: 0.86rem; color: var(--muted); min-width: 0; flex: 1 1 160px; }
+  select, input[type="text"] { font: 500 0.95rem var(--body); color: var(--ink); background: var(--chip); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; width: 100%; }
+  input[type="range"] { width: 100%; }
+  .btn { font: 600 0.86rem var(--body); border-radius: 8px; padding: 8px 12px; border: 1px solid var(--line); background: var(--chip); color: var(--ink); cursor: pointer; }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .btn.danger { color: var(--danger); }
+  .btn[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .palette { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 5px; }
+  .dye { aspect-ratio: 1; border-radius: 6px; border: 2px solid rgba(0, 0, 0, 0.18); cursor: pointer; padding: 0; }
+  .dye.sel { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent); }
+  .dye.empty { background: #f4f4f4; background-image: linear-gradient(135deg, transparent 46%, #c0392b 47%, #c0392b 53%, transparent 54%); }
+  .dye.clear { background-color: #fff; background-image: linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%); background-size: 10px 10px; background-position: 0 0, 0 5px, 5px -5px, -5px 0; }
+  .tools { display: flex; flex-wrap: wrap; gap: 6px; }
+  .uses { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+  .uses li { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px 3px 4px; border: 1px solid var(--line); border-radius: 999px; font-size: 0.84rem; }
+  .uses li i { width: 15px; height: 15px; border-radius: 4px; border: 1px solid rgba(0, 0, 0, 0.2); display: inline-block; }
+  .crop { position: relative; width: 100%; max-width: 280px; aspect-ratio: 1; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); touch-action: none; background-color: #fff; background-image: linear-gradient(45deg, #ddd 25%, transparent 25%), linear-gradient(-45deg, #ddd 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ddd 75%), linear-gradient(-45deg, transparent 75%, #ddd 75%); background-size: 16px 16px; background-position: 0 0, 0 8px, 8px -8px, -8px 0; }
+  .crop canvas { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
+  .saved { display: grid; gap: 8px; }
+  .item { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; background: var(--chip); }
+  .item canvas { width: 56px; height: 56px; image-rendering: pixelated; border-radius: 6px; background: #fff; }
+  .item b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item small { color: var(--muted); }
+  .steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 0.92rem; }
+  .note { font-size: 0.84rem; color: var(--muted); border-left: 3px solid var(--accent); padding-left: 10px; margin: 0; }
+  .status { font-size: 0.9rem; min-height: 1.3em; }
+  .status.err { color: var(--danger); }
+  .loading { position: absolute; inset: 0; display: grid; place-items: center; color: #e8f1ed; font-family: var(--display); font-size: 1.1rem; }
+</style>
+
+<div class="app">
+  <header>
+    <h1>Giysi Atölyesi</h1>
+    <p>Kendi çizimin ve fotoğraflarınla Giysi Modu paketi</p>
+  </header>
+  <div class="modes" role="tablist" aria-label="Atölye bölümleri">
+    <button class="mode" role="tab" data-mode="giysi" aria-selected="true">Giysi çizimi</button>
+    <button class="mode" role="tab" data-mode="foto" aria-selected="false">Foto motifi</button>
+    <button class="mode" role="tab" data-mode="paket" aria-selected="false">Paket</button>
+  </div>
+
+  <main class="layout">
+    <section class="stage" id="sahneKutu" aria-label="Çizim alanı">
+      <canvas id="sahne3b" aria-label="3B giysi; dokunarak boya"></canvas>
+      <canvas id="kalip" width="512" height="512" aria-label="Giysi kalıbı; dokunarak boya" hidden></canvas>
+      <div class="loading" id="yukleniyor">Yükleniyor…</div>
+      <div class="top-tools" id="gorunumAraclari">
+        <button class="pill" type="button" id="g3b" aria-pressed="true">3B model</button>
+        <button class="pill" type="button" id="gKalip" aria-pressed="false">Düz kalıp</button>
+        <button class="pill" type="button" id="gYakin" aria-pressed="false">Yakınlaş</button>
+      </div>
+      <div class="stage-tools" id="sahneAraclari">
+        <button class="pill" type="button" id="kipBoya" aria-pressed="true">Parmakla boya</button>
+        <button class="pill" type="button" id="kipDon" aria-pressed="false">Parmakla döndür</button>
+        <button class="pill" type="button" id="gArka" aria-pressed="false">Arkası</button>
+      </div>
+    </section>
+
+    <section class="panel" aria-label="Araçlar">
+      <!-- Giysi çizimi -->
+      <div id="pGiysi">
+        <div class="sec">
+          <h2>Giysi</h2>
+          <div class="row">
+            <label class="field" for="giysiSec">Şekil<select id="giysiSec"></select></label>
+            <label class="field" for="yuvaSec">Atölye yuvası<select id="yuvaSec"></select></label>
+          </div>
+          <div class="row">
+            <label class="field" for="sablonSec">Başlangıç şablonu<select id="sablonSec"></select></label>
+            <button class="btn" type="button" id="sablonUygula">Şablonu uygula</button>
+          </div>
+          <p class="hint">Şablon yalnızca başlangıç içindir; sonra her pikseli fırçayla değiştirebilirsin. Boş bırakılan yerler beyaz kumaş kalır.</p>
+        </div>
+      </div>
+      <!-- Foto motifi -->
+      <div id="pFoto" hidden>
+        <div class="sec">
+          <h2>Fotoğraf</h2>
+          <label class="btn primary" for="fotoDosya" style="text-align:center">Galeriden fotoğraf seç</label>
+          <input type="file" id="fotoDosya" accept="image/*" hidden>
+          <div class="row" style="align-items:start">
+            <div class="crop" id="kirpKutu"><canvas id="kirp" width="128" height="128" aria-label="Kırpma alanı; sürükleyerek kaydır"></canvas></div>
+            <div style="display:grid;gap:8px;flex:1 1 180px;min-width:0">
+              <label class="field" for="fZoom">Büyüt / küçült <span id="fZoomV">%100</span><input type="range" id="fZoom" min="25" max="400" step="5" value="100"></label>
+              <label class="row" style="gap:6px;font-size:0.88rem"><input type="checkbox" id="fDither"> Renk geçişlerini nokta deseniyle yumuşat</label>
+              <label class="row" style="gap:6px;font-size:0.88rem"><input type="checkbox" id="fSeffaf" checked> Saydam yerleri şeffaf bırak</label>
+              <button class="btn" type="button" id="fArka">Arka plan rengini şeffaf yap</button>
+              <label class="field" for="fTol">Arka plan toleransı <span id="fTolV">40</span><input type="range" id="fTol" min="5" max="120" step="5" value="40"></label>
+            </div>
+          </div>
+          <p class="hint">Sürükleyerek kaydır, kaydırıcıyla büyüt. Fotoğraf 128×128 boyutuna ve Minecraft'ın 16 boya rengine dönüştürülür. "Arka plan rengini şeffaf yap"a bastıktan sonra kırpma alanında silinecek renge dokun.</p>
+          <div class="row">
+            <label class="field" for="fotoYuva">Foto yuvası<select id="fotoYuva"></select></label>
+            <button class="btn" type="button" id="fDonustur">Yeniden dönüştür</button>
+          </div>
+        </div>
+      </div>
+      <!-- Ortak: boya ve araçlar -->
+      <div id="pFirca">
+        <div class="sec">
+          <h2>Boya <span class="hint" id="secRenk"></span></h2>
+          <div class="palette" id="palet"></div>
+          <div class="tools" role="group" aria-label="Araç">
+            <button class="btn" type="button" data-tool="firca" aria-pressed="true">Fırça</button>
+            <button class="btn" type="button" data-tool="kova" aria-pressed="false">Kova</button>
+            <button class="btn" type="button" data-tool="damla" aria-pressed="false">Damlalık</button>
+            <button class="btn" type="button" id="geriAl">Geri al</button>
+            <button class="btn" type="button" id="ileriAl">İleri al</button>
+          </div>
+          <label class="field" for="firca">Fırça boyu <span id="fircaV">1 piksel</span><input type="range" id="firca" min="1" max="5" step="1" value="1"></label>
+          <p class="hint" id="aracNot">Fırça: dokunduğun pikseli boyar. Kova: aynı renkli alanı doldurur. Damlalık: rengi seçer.</p>
+        </div>
+        <div class="sec">
+          <h2>Kaydet</h2>
+          <div class="row">
+            <label class="field" for="ad">Ad (oyunda görünür)<input type="text" id="ad" maxlength="32" placeholder="Örn. Yıldızlı tişört"></label>
+            <button class="btn primary" type="button" id="kaydet">Yuvaya kaydet</button>
+          </div>
+          <div>
+            <span class="hint">Oyunda tüketeceği boyalar (her renk bir boya):</span>
+            <ul class="uses" id="kullanilan"></ul>
+          </div>
+          <p class="status" id="durum" role="status"></p>
+        </div>
+      </div>
+      <!-- Paket -->
+      <div id="pPaket" hidden>
+        <div class="sec">
+          <h2>Kayıtlı tasarımlar</h2>
+          <div class="saved" id="kayitlar"></div>
+        </div>
+        <div class="sec">
+          <h2>Paketi indir</h2>
+          <button class="btn primary" type="button" id="paketle">Paketi oluştur ve indir (.zip)</button>
+          <p class="status" id="paketDurum" role="status"></p>
+          <ol class="steps">
+            <li>İnen <b>GiysiAtolye.zip</b> dosyasının adını dosya yöneticisinde <b>GiysiAtolye.mcaddon</b> yap.</li>
+            <li>Dosyaya dokun; Minecraft açılır ve iki paketi içe aktarır.</li>
+            <li>Dünya ayarlarında <b>Davranış paketleri</b> ve <b>Kaynak paketleri</b> bölümünde "Giysi Atölyesi"ni etkinleştir. Kaynak paketinde "Giysi Atölyesi" <b>Giysi Modu'nun üstünde</b> olmalı.</li>
+            <li>Tezgâhta: çizimler "Renk şablonu → Atölye: <i>ad</i>", fotoğraflar "Motif ekle → Foto (Atölye)" altında çıkar.</li>
+          </ol>
+          <p class="note">Tasarımlar yalnızca bu tarayıcıda saklanır. Yeni tasarım ekleyince paketi yeniden indirip aynı şekilde aç; eski paketin yerini alır. Çok oyunculu dünyada diğer oyuncular paketi dünyaya girerken otomatik indirir.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script type="application/json" id="veri">/*__VERI__*/</script>
+<script>
+(() => {
+  const D = JSON.parse(document.getElementById("veri").textContent);
+  const DYES = D.dyes;
+  const TPL = D.templates;
+  const BASE = 0xf4f4f4;
+  const SLOTS = 4, PHOTO_SLOTS = 8;
+  const hex = (rgb) => "#" + rgb.toString(16).padStart(6, "0");
+  const $ = (id) => document.getElementById(id);
+  const STORE = "giysi_atolye_v1";
+
+  // ------------------------------------------------------------- kalıcı (bu tarayıcıda) kayıt
+  function loadStore() {
+    let s = null;
+    try { s = JSON.parse(localStorage.getItem(STORE) || "null"); } catch { s = null; }
+    s = s || {};
+    s.cloth = s.cloth || [];
+    s.photo = s.photo || [];
+    s.version = s.version || 0;
+    if (!s.uuids) {
+      const u = () => (crypto.randomUUID ? crypto.randomUUID() : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => { const r = (Math.random() * 16) | 0; return (c === "x" ? r : (r & 3) | 8).toString(16); }));
+      s.uuids = { rp: u(), rpMod: u(), bp: u(), bpScript: u() };
+    }
+    return s;
+  }
+  let store = loadStore();
+  function saveStore() { try { localStorage.setItem(STORE, JSON.stringify(store)); } catch { /* tarayıcı saklamaya izin vermiyor */ } }
+  const toB64 = (u8) => { let s = ""; for (let i = 0; i < u8.length; i += 8192) s += String.fromCharCode.apply(null, u8.subarray(i, i + 8192)); return btoa(s); };
+  const fromB64 = (b) => Uint8Array.from(atob(b), (c) => c.charCodeAt(0));
+
+  // ------------------------------------------------------------- veri
+  function loadImage(src) { return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src; }); }
+  function pixels(im) {
+    const c = document.createElement("canvas"); c.width = im.width; c.height = im.height;
+    const x = c.getContext("2d"); x.drawImage(im, 0, 0);
+    return x.getImageData(0, 0, im.width, im.height);
+  }
+  const garments = {}; // "t01" / "t01s" → garment
+  const shapesList = []; // { key, name, cat, std, slim }
+  async function decode() {
+    for (const g of D.garments) {
+      g.shadingPx = pixels(await loadImage(g.shading));
+      g.detailPx = pixels(await loadImage(g.detail));
+      g.regionPx = [];
+      for (const r of g.regions) g.regionPx.push(pixels(await loadImage(r)));
+      g.key = `${g.key}${String(g.shape + 1).padStart(2, "0")}${g.variant === "std" ? "" : "s"}`;
+      g.mask = new Uint8Array(128 * 128);
+      for (let i = 0; i < 128 * 128; i++) g.mask[i] = g.regionPx[0].data[i * 4 + 3] ? 1 : 0;
+      g.faceAt = new Int16Array(128 * 128).fill(-1);
+      g.faces.forEach((f, fi) => { for (let y = f.y; y < f.y + f.h; y++) for (let x = f.x; x < f.x + f.w; x++) g.faceAt[y * 128 + x] = fi; });
+      garments[g.key] = g;
+    }
+    for (const g of D.garments) {
+      if (g.variant !== "std") continue;
+      const slim = garments[g.key + "s"];
+      shapesList.push({ key: g.key, name: g.name, cat: g.cat, std: g, slim });
+    }
+  }
+  // Standart kalıptaki çizimi ince kol kalıbına aktarır (aynı parça, aynı yüz, aynı oransal konum).
+  function mapToVariant(buf, from, to) {
+    const out = new Uint8Array(128 * 128);
+    to.faces.forEach((tf) => {
+      const sf = from.faces.find((f) => f.part === tf.part && f.face === tf.face);
+      if (!sf) return;
+      for (let j = 0; j < tf.h; j++) for (let i = 0; i < tf.w; i++) {
+        const si = Math.min(sf.w - 1, Math.floor(((i + 0.5) / tf.w) * sf.w));
+        const sj = Math.min(sf.h - 1, Math.floor(((j + 0.5) / tf.h) * sf.h));
+        out[(tf.y + j) * 128 + tf.x + i] = buf[(sf.y + sj) * 128 + sf.x + si];
+      }
+    });
+    return out;
+  }
+
+  // ------------------------------------------------------------- durum
+  const state = {
+    mode: "giysi", shape: null, slot: 0, tool: "firca", color: 15, brush: 1, view: "3d", paint: true, back: false, near: false,
+    buf: new Uint8Array(128 * 128), photo: new Uint8Array(128 * 128), photoSlot: 0,
+    undo: [], redo: [],
+  };
+  const activeBuf = () => (state.mode === "foto" ? state.photo : state.buf);
+
+  // ------------------------------------------------------------- 3B sahne
+  const c3 = $("sahne3b");
+  const renderer = new THREE.WebGLRenderer({ canvas: c3, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(30, 1, 1, 400);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4a44, 0.95));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.5); sun.position.set(-30, 60, -50); scene.add(sun);
+  const yawGroup = new THREE.Group(); scene.add(yawGroup);
+  const root = new THREE.Group(); root.scale.x = -1; yawGroup.add(root);
+  const bones = {};
+  function makeSkeleton(slim) {
+    for (const k of Object.keys(bones)) { bones[k].parent && bones[k].parent.remove(bones[k]); delete bones[k]; }
+    const ap = slim ? 21.5 : 22;
+    for (const [name, parent, pv] of [["waist", null, [0, 12, 0]], ["body", "waist", [0, 24, 0]], ["head", "body", [0, 24, 0]], ["rightArm", "body", [-5, ap, 0]], ["leftArm", "body", [5, ap, 0]], ["rightLeg", null, [-1.9, 12, 0]], ["leftLeg", null, [1.9, 12, 0]]]) {
+      const g = new THREE.Group(); g.userData.pivot = pv;
+      const pp = parent ? bones[parent].userData.pivot : [0, 0, 0];
+      g.position.set(pv[0] - pp[0], pv[1] - pp[1], pv[2] - pp[2]);
+      (parent ? bones[parent] : root).add(g); bones[name] = g;
+    }
+  }
+  function facePoint(p, face, u, v) {
+    const [x0, y0, z0] = p.from, [x1, y1, z1] = p.to; const L = (a, b, t) => a + (b - a) * t;
+    switch (face) {
+      case "north": return [L(x0, x1, u), L(y1, y0, v), z0];
+      case "south": return [L(x1, x0, u), L(y1, y0, v), z1];
+      case "east": return [x0, L(y1, y0, v), L(z1, z0, u)];
+      case "west": return [x1, L(y1, y0, v), L(z0, z1, u)];
+      case "up": return [L(x0, x1, u), y1, L(z1, z0, v)];
+      case "down": return [L(x0, x1, u), y0, L(z0, z1, v)];
+    }
+  }
+  function partGeometry(g, pi, pivot) {
+    const pos = [], uv = [];
+    for (const f of g.faces) {
+      if (f.part !== pi) continue;
+      const cs = [[0, 0], [1, 0], [1, 1], [0, 1]];
+      const P = cs.map(([u, v]) => { const q = facePoint(g.parts[pi], f.face, u, v); return [q[0] - pivot[0], q[1] - pivot[1], q[2] - pivot[2]]; });
+      const UV = cs.map(([u, v]) => [(f.x + u * f.w) / 128, 1 - (f.y + v * f.h) / 128]);
+      for (const k of [0, 1, 2, 0, 2, 3]) { pos.push(...P[k]); uv.push(...UV[k]); }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+    geo.computeVertexNormals();
+    return geo;
+  }
+  let meshes = [];
+  const SKIN = 0xc9a27c;
+  function buildModel() {
+    meshes.forEach((m) => m.parent && m.parent.remove(m)); meshes = [];
+    const sh = state.shape;
+    const g = sh.std;
+    makeSkeleton(false);
+    const lam = (o) => new THREE.MeshLambertMaterial(o);
+    const add = (bone, from, to, mat) => {
+      const pv = bones[bone].userData.pivot;
+      const m = new THREE.Mesh(new THREE.BoxGeometry(to[0] - from[0], to[1] - from[1], to[2] - from[2]), mat);
+      m.position.set((from[0] + to[0]) / 2 - pv[0], (from[1] + to[1]) / 2 - pv[1], (from[2] + to[2]) / 2 - pv[2]);
+      bones[bone].add(m); meshes.push(m);
+    };
+    const skin = lam({ color: SKIN });
+    add("head", [-4, 24, -4], [4, 32, 4], [skin, skin, lam({ color: 0x4a3020 }), skin, lam({ color: 0x4a3020 }), skin]);
+    add("body", [-4, 12, -2], [4, 24, 2], lam({ color: 0x8d99a3 }));
+    add("rightArm", [-8, 12, -2], [-4, 24, 2], skin); add("leftArm", [4, 12, -2], [8, 24, 2], skin);
+    add("rightLeg", [-3.9, 0, -2], [0.1, 12, 2], lam({ color: 0x55606b })); add("leftLeg", [-0.1, 0, -2], [3.9, 12, 2], lam({ color: 0x55606b }));
+    garmentTex = new THREE.CanvasTexture(texCanvas);
+    garmentTex.magFilter = THREE.NearestFilter; garmentTex.minFilter = THREE.NearestFilter; garmentTex.generateMipmaps = false;
+    const mat = new THREE.MeshLambertMaterial({ map: garmentTex, alphaTest: 0.5, side: THREE.DoubleSide });
+    garmentMeshes = [];
+    g.parts.forEach((p, pi) => {
+      const bone = bones[p.bone];
+      const mesh = new THREE.Mesh(partGeometry(g, pi, bone.userData.pivot), mat);
+      bone.add(mesh); meshes.push(mesh); garmentMeshes.push(mesh);
+    });
+    focusCamera();
+  }
+  let garmentTex = null, garmentMeshes = [];
+  const texCanvas = document.createElement("canvas"); texCanvas.width = texCanvas.height = 128;
+  const FOCUS = { hat: [29.5, 30], top: [18, 40], pants: [7, 40], shoes: [2, 26] };
+  let camY = 18, camD = 40, tgtY = 18, tgtD = 40, yaw = -0.4;
+  function focusCamera() { const f = FOCUS[state.shape.cat]; tgtY = f[0]; tgtD = f[1] * (state.near ? 0.62 : 1); }
+  function resize() {
+    const r = c3.getBoundingClientRect();
+    renderer.setSize(r.width, r.height, false);
+    camera.aspect = r.width / Math.max(1, r.height); camera.updateProjectionMatrix();
+  }
+  window.addEventListener("resize", resize);
+  function frame() {
+    camY += (tgtY - camY) * 0.15; camD += (tgtD - camD) * 0.15;
+    yawGroup.rotation.y = yaw + (state.back ? Math.PI : 0);
+    camera.position.set(0, camY + camD * 0.1, -camD); camera.lookAt(0, camY, 0);
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+
+  // ------------------------------------------------------------- doku çizimi
+  function renderTexture() {
+    const g = state.shape.std;
+    const x = texCanvas.getContext("2d");
+    const img = x.createImageData(128, 128);
+    const sh = g.shadingPx.data, de = g.detailPx.data;
+    for (let i = 0; i < 128 * 128; i++) {
+      if (!g.mask[i]) continue;
+      const v = state.buf[i];
+      const rgb = v ? DYES[v - 1].rgb : BASE;
+      const k = sh[i * 4] / 242;
+      img.data[i * 4] = Math.min(255, ((rgb >> 16) & 255) * k);
+      img.data[i * 4 + 1] = Math.min(255, ((rgb >> 8) & 255) * k);
+      img.data[i * 4 + 2] = Math.min(255, (rgb & 255) * k);
+      img.data[i * 4 + 3] = 255;
+      if (de[i * 4 + 3]) { img.data[i * 4] = de[i * 4]; img.data[i * 4 + 1] = de[i * 4 + 1]; img.data[i * 4 + 2] = de[i * 4 + 2]; }
+    }
+    x.putImageData(img, 0, 0);
+    if (garmentTex) garmentTex.needsUpdate = true;
+    renderFlat();
+    renderUses();
+  }
+  // Düz kalıp: 128×128 dokuyu 4 kat büyütüp yüz sınırlarıyla gösterir (fotoğrafta düz resim).
+  const flat = $("kalip");
+  function renderFlat() {
+    const x = flat.getContext("2d");
+    x.imageSmoothingEnabled = false;
+    x.clearRect(0, 0, 512, 512);
+    const buf = activeBuf();
+    const g = state.shape?.std;
+    for (let i = 0; i < 128 * 128; i++) {
+      const px = (i % 128) * 4, py = Math.floor(i / 128) * 4;
+      if (state.mode === "foto") {
+        if (!buf[i]) continue;
+        x.fillStyle = hex(DYES[buf[i] - 1].rgb); x.fillRect(px, py, 4, 4);
+      } else if (g && g.mask[i]) {
+        x.fillStyle = hex(buf[i] ? DYES[buf[i] - 1].rgb : BASE); x.fillRect(px, py, 4, 4);
+      }
+    }
+    if (state.mode !== "foto" && g) {
+      x.strokeStyle = "rgba(0,0,0,0.35)"; x.lineWidth = 1;
+      for (const f of g.faces) x.strokeRect(f.x * 4 + 0.5, f.y * 4 + 0.5, f.w * 4 - 1, f.h * 4 - 1);
+    }
+  }
+
+  // ------------------------------------------------------------- boyama
+  function pushUndo() { state.undo.push(activeBuf().slice()); if (state.undo.length > 40) state.undo.shift(); state.redo = []; }
+  function restore(from, to) {
+    if (!from.length) return;
+    to.push(activeBuf().slice());
+    activeBuf().set(from.pop());
+    refresh();
+  }
+  function paintable(i) { return state.mode === "foto" ? true : !!state.shape.std.mask[i]; }
+  function applyAt(tx, ty, start) {
+    if (tx < 0 || ty < 0 || tx > 127 || ty > 127) return;
+    const buf = activeBuf();
+    const i = ty * 128 + tx;
+    if (!paintable(i)) return;
+    const val = state.color;
+    if (state.tool === "damla") { setColor(buf[i]); return; }
+    if (start) pushUndo();
+    const g = state.shape?.std;
+    const face = state.mode === "foto" ? -1 : g.faceAt[i];
+    if (state.tool === "kova") {
+      if (!start) return;
+      const target = buf[i];
+      if (target === val) return;
+      const stack = [i];
+      while (stack.length) {
+        const k = stack.pop();
+        if (buf[k] !== target || !paintable(k) || (face >= 0 && g.faceAt[k] !== face)) continue;
+        buf[k] = val;
+        const kx = k % 128, ky = (k / 128) | 0;
+        if (kx > 0) stack.push(k - 1); if (kx < 127) stack.push(k + 1);
+        if (ky > 0) stack.push(k - 128); if (ky < 127) stack.push(k + 128);
+      }
+    } else {
+      const n = state.brush, o = Math.floor((n - 1) / 2);
+      for (let dy = 0; dy < n; dy++) for (let dx = 0; dx < n; dx++) {
+        const x = tx - o + dx, y = ty - o + dy;
+        if (x < 0 || y < 0 || x > 127 || y > 127) continue;
+        const k = y * 128 + x;
+        if (!paintable(k) || (face >= 0 && g.faceAt[k] !== face)) continue;
+        buf[k] = val;
+      }
+    }
+    refresh();
+  }
+  function refresh() { if (state.mode === "foto") { renderFlat(); renderUses(); } else renderTexture(); }
+
+  // 3B üzerinde boyama: dokunulan noktanın doku koordinatı bulunur.
+  const ray = new THREE.Raycaster();
+  function hitTexel(ev) {
+    const r = c3.getBoundingClientRect();
+    const v = new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(v, camera);
+    const hit = ray.intersectObjects(garmentMeshes, false)[0];
+    if (!hit || !hit.uv) return null;
+    return [Math.min(127, Math.floor(hit.uv.x * 128)), Math.min(127, Math.floor((1 - hit.uv.y) * 128))];
+  }
+  let dragging = false, lastX = 0, painting = false;
+  c3.addEventListener("pointerdown", (e) => {
+    c3.setPointerCapture(e.pointerId);
+    if (state.paint) { const t = hitTexel(e); if (t) { painting = true; applyAt(t[0], t[1], true); } }
+    else { dragging = true; lastX = e.clientX; }
+  });
+  c3.addEventListener("pointermove", (e) => {
+    if (painting && state.tool === "firca") { const t = hitTexel(e); if (t) applyAt(t[0], t[1], false); }
+    if (dragging) { yaw += (e.clientX - lastX) * 0.012; lastX = e.clientX; }
+  });
+  const stop = () => { dragging = false; painting = false; };
+  c3.addEventListener("pointerup", stop); c3.addEventListener("pointercancel", stop);
+  c3.addEventListener("wheel", (e) => { e.preventDefault(); tgtD = Math.max(14, Math.min(90, tgtD * (e.deltaY > 0 ? 1.1 : 0.9))); }, { passive: false });
+  // Düz kalıpta boyama
+  function flatTexel(ev) {
+    const r = flat.getBoundingClientRect();
+    const s = Math.min(r.width, r.height), ox = (r.width - s) / 2, oy = (r.height - s) / 2;
+    return [Math.floor(((ev.clientX - r.left - ox) / s) * 128), Math.floor(((ev.clientY - r.top - oy) / s) * 128)];
+  }
+  let flatPaint = false;
+  flat.addEventListener("pointerdown", (e) => { flat.setPointerCapture(e.pointerId); flatPaint = true; const t = flatTexel(e); applyAt(t[0], t[1], true); });
+  flat.addEventListener("pointermove", (e) => { if (flatPaint && state.tool === "firca") { const t = flatTexel(e); applyAt(t[0], t[1], false); } });
+  flat.addEventListener("pointerup", () => { flatPaint = false; });
+  flat.addEventListener("pointercancel", () => { flatPaint = false; });
+
+  // ------------------------------------------------------------- palet ve araçlar
+  function setColor(v) {
+    state.color = v;
+    document.querySelectorAll("#palet .dye").forEach((b) => b.classList.toggle("sel", +b.dataset.v === v));
+    $("secRenk").textContent = v ? DYES[v - 1].name : state.mode === "foto" ? "Şeffaf (silgi)" : "Boş (beyaz kumaş)";
+  }
+  function buildPalette() {
+    const p = $("palet"); p.innerHTML = "";
+    const e = document.createElement("button");
+    e.type = "button"; e.dataset.v = "0";
+    e.className = "dye " + (state.mode === "foto" ? "clear" : "empty");
+    e.title = state.mode === "foto" ? "Şeffaf (silgi)" : "Boş (beyaz kumaş)"; e.setAttribute("aria-label", e.title);
+    e.onclick = () => setColor(0); p.appendChild(e);
+    DYES.forEach((d, i) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "dye"; b.dataset.v = String(i + 1); b.style.background = hex(d.rgb); b.title = d.name; b.setAttribute("aria-label", d.name);
+      b.onclick = () => setColor(i + 1); p.appendChild(b);
+    });
+    setColor(state.color);
+  }
+  document.querySelectorAll("[data-tool]").forEach((b) => b.onclick = () => {
+    state.tool = b.dataset.tool;
+    document.querySelectorAll("[data-tool]").forEach((x) => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+  });
+  $("geriAl").onclick = () => restore(state.undo, state.redo);
+  $("ileriAl").onclick = () => restore(state.redo, state.undo);
+  $("firca").oninput = (e) => { state.brush = +e.target.value; $("fircaV").textContent = `${state.brush} piksel`; };
+
+  function renderUses() {
+    const used = new Set();
+    const buf = activeBuf();
+    const g = state.shape?.std;
+    for (let i = 0; i < 128 * 128; i++) if (buf[i] && (state.mode === "foto" || g?.mask[i])) used.add(buf[i] - 1);
+    $("kullanilan").innerHTML = [...used].sort((a, b) => a - b).map((d) => `<li><i style="background:${hex(DYES[d].rgb)}"></i>${DYES[d].name}</li>`).join("") || "<li>Boya gerekmiyor</li>";
+    return [...used].sort((a, b) => a - b);
+  }
+
+  // ------------------------------------------------------------- görünüm düğmeleri
+  function press(b, on) { b.setAttribute("aria-pressed", on ? "true" : "false"); }
+  function setView(v) {
+    state.view = v;
+    c3.hidden = v !== "3d"; flat.hidden = v === "3d";
+    press($("g3b"), v === "3d"); press($("gKalip"), v !== "3d");
+    $("sahneAraclari").hidden = v !== "3d";
+    if (v === "3d") resize();
+  }
+  $("g3b").onclick = () => setView("3d");
+  $("gKalip").onclick = () => setView("flat");
+  $("gYakin").onclick = () => { state.near = !state.near; press($("gYakin"), state.near); focusCamera(); };
+  $("kipBoya").onclick = () => { state.paint = true; press($("kipBoya"), true); press($("kipDon"), false); };
+  $("kipDon").onclick = () => { state.paint = false; press($("kipBoya"), false); press($("kipDon"), true); };
+  $("gArka").onclick = () => { state.back = !state.back; press($("gArka"), state.back); };
+
+  // ------------------------------------------------------------- giysi çizimi
+  function fillSelects() {
+    $("giysiSec").innerHTML = shapesList.map((s, i) => `<option value="${i}">${s.name}</option>`).join("");
+    $("yuvaSec").innerHTML = Array.from({ length: SLOTS }, (_, k) => `<option value="${k}">Yuva ${k + 1}</option>`).join("");
+    $("sablonSec").innerHTML = `<option value="-1">Beyaz kumaş</option>` + TPL.map((t, i) => `<option value="${i}">${t.name} · ${t.regions} bölge</option>`).join("");
+    $("fotoYuva").innerHTML = Array.from({ length: PHOTO_SLOTS }, (_, k) => `<option value="${k}">Foto ${k + 1}</option>`).join("");
+  }
+  function loadDesign() {
+    const rec = store.cloth.find((c) => c.key === state.shape.key && c.slot === state.slot);
+    state.buf = rec ? fromB64(rec.buf) : new Uint8Array(128 * 128);
+    $("ad").value = rec ? rec.name : "";
+    state.undo = []; state.redo = [];
+    renderTexture();
+  }
+  $("giysiSec").onchange = (e) => { state.shape = shapesList[+e.target.value]; buildModel(); loadDesign(); };
+  $("yuvaSec").onchange = (e) => { state.slot = +e.target.value; loadDesign(); };
+  $("sablonUygula").onclick = () => {
+    const t = +$("sablonSec").value;
+    pushUndo();
+    if (t < 0) state.buf.fill(0);
+    else {
+      const map = state.shape.std.regionPx[t].data;
+      const palette = [15, 4, 12, 6, 2, 11, 10, 7, 13, 14, 16, 8, 9, 3, 5, 1];
+      for (let i = 0; i < 128 * 128; i++) if (map[i * 4 + 3]) state.buf[i] = palette[(map[i * 4] - 1) % 16];
+    }
+    renderTexture();
+  };
+
+  // ------------------------------------------------------------- foto motifi
+  const crop = $("kirp");
+  let srcImg = null, zoom = 1, panX = 0, panY = 0, pickBg = false;
+  $("fotoDosya").onchange = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const url = URL.createObjectURL(f);
+    try { srcImg = await loadImage(url); } catch { status("Fotoğraf açılamadı. Başka bir dosya dene.", true); return; }
+    zoom = 1; panX = 0; panY = 0; $("fZoom").value = 100; $("fZoomV").textContent = "%100";
+    convertPhoto();
+  };
+  $("fZoom").oninput = (e) => { zoom = +e.target.value / 100; $("fZoomV").textContent = `%${e.target.value}`; convertPhoto(); };
+  $("fTol").oninput = (e) => { $("fTolV").textContent = e.target.value; };
+  $("fDither").onchange = convertPhoto;
+  $("fSeffaf").onchange = convertPhoto;
+  $("fDonustur").onclick = convertPhoto;
+  $("fArka").onclick = () => { pickBg = true; status("Kırpma alanında şeffaf yapılacak renge dokun."); };
+  let cropDrag = null;
+  crop.addEventListener("pointerdown", (e) => {
+    crop.setPointerCapture(e.pointerId);
+    const r = crop.getBoundingClientRect();
+    if (pickBg) {
+      const tx = Math.floor(((e.clientX - r.left) / r.width) * 128), ty = Math.floor(((e.clientY - r.top) / r.height) * 128);
+      removeColor(tx, ty); pickBg = false; return;
+    }
+    cropDrag = { x: e.clientX, y: e.clientY, px: panX, py: panY, w: r.width };
+  });
+  crop.addEventListener("pointermove", (e) => {
+    if (!cropDrag) return;
+    panX = cropDrag.px + ((e.clientX - cropDrag.x) / cropDrag.w) * 128;
+    panY = cropDrag.py + ((e.clientY - cropDrag.y) / cropDrag.w) * 128;
+    convertPhoto();
+  });
+  crop.addEventListener("pointerup", () => { cropDrag = null; });
+  crop.addEventListener("pointercancel", () => { cropDrag = null; });
+
+  function nearestDye(r, g, b) {
+    let best = 0, bd = Infinity;
+    DYES.forEach((d, i) => {
+      const dr = ((d.rgb >> 16) & 255) - r, dg = ((d.rgb >> 8) & 255) - g, db = (d.rgb & 255) - b;
+      const rm = (((d.rgb >> 16) & 255) + r) / 2;
+      const dist = (2 + rm / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rm) / 256) * db * db;
+      if (dist < bd) { bd = dist; best = i; }
+    });
+    return best;
+  }
+  function convertPhoto() {
+    if (!srcImg) return;
+    const c = document.createElement("canvas"); c.width = c.height = 128;
+    const x = c.getContext("2d");
+    const s = Math.max(128 / srcImg.width, 128 / srcImg.height) * zoom;
+    const w = srcImg.width * s, h = srcImg.height * s;
+    x.drawImage(srcImg, (128 - w) / 2 + panX, (128 - h) / 2 + panY, w, h);
+    const px = x.getImageData(0, 0, 128, 128).data;
+    const err = new Float32Array(128 * 128 * 3);
+    const dither = $("fDither").checked, keepAlpha = $("fSeffaf").checked;
+    for (let i = 0; i < 128 * 128; i++) {
+      if (keepAlpha && px[i * 4 + 3] < 128) { state.photo[i] = 0; continue; }
+      const r = Math.max(0, Math.min(255, px[i * 4] + err[i * 3])), g = Math.max(0, Math.min(255, px[i * 4 + 1] + err[i * 3 + 1])), b = Math.max(0, Math.min(255, px[i * 4 + 2] + err[i * 3 + 2]));
+      const d = nearestDye(r, g, b);
+      state.photo[i] = d + 1;
+      if (dither) {
+        const rgb = DYES[d].rgb;
+        const er = r - ((rgb >> 16) & 255), eg = g - ((rgb >> 8) & 255), eb = b - (rgb & 255);
+        const xx = i % 128, yy = (i / 128) | 0;
+        const spread = (dx, dy, f) => { const nx = xx + dx, ny = yy + dy; if (nx < 0 || nx > 127 || ny > 127) return; const k = (ny * 128 + nx) * 3; err[k] += er * f; err[k + 1] += eg * f; err[k + 2] += eb * f; };
+        spread(1, 0, 7 / 16); spread(-1, 1, 3 / 16); spread(0, 1, 5 / 16); spread(1, 1, 1 / 16);
+      }
+    }
+    state.undo = []; state.redo = [];
+    drawCrop();
+    renderFlat(); renderUses();
+  }
+  function removeColor(tx, ty) {
+    const i = ty * 128 + tx;
+    const target = state.photo[i];
+    if (!target) return;
+    pushUndo();
+    const tol = +$("fTol").value;
+    const t = DYES[target - 1].rgb;
+    for (let k = 0; k < 128 * 128; k++) {
+      const v = state.photo[k];
+      if (!v) continue;
+      const c = DYES[v - 1].rgb;
+      const d = Math.abs(((c >> 16) & 255) - ((t >> 16) & 255)) + Math.abs(((c >> 8) & 255) - ((t >> 8) & 255)) + Math.abs((c & 255) - (t & 255));
+      if (d <= tol) state.photo[k] = 0;
+    }
+    drawCrop(); renderFlat(); renderUses();
+    status("Arka plan şeffaf yapıldı. İstersen fırçayla düzelt.");
+  }
+  function drawCrop() {
+    const x = crop.getContext("2d");
+    const img = x.createImageData(128, 128);
+    for (let i = 0; i < 128 * 128; i++) {
+      const v = state.photo[i]; if (!v) continue;
+      const rgb = DYES[v - 1].rgb;
+      img.data[i * 4] = (rgb >> 16) & 255; img.data[i * 4 + 1] = (rgb >> 8) & 255; img.data[i * 4 + 2] = rgb & 255; img.data[i * 4 + 3] = 255;
+    }
+    x.putImageData(img, 0, 0);
+  }
+  $("fotoYuva").onchange = (e) => {
+    state.photoSlot = +e.target.value;
+    const rec = store.photo.find((p) => p.slot === state.photoSlot);
+    if (rec) { state.photo = fromB64(rec.buf); $("ad").value = rec.name; } else { $("ad").value = ""; }
+    drawCrop(); renderFlat(); renderUses();
+  };
+
+  // ------------------------------------------------------------- kaydetme
+  function status(msg, err) { const s = $("durum"); s.textContent = msg; s.classList.toggle("err", !!err); }
+  $("kaydet").onclick = () => {
+    const name = $("ad").value.trim() || (state.mode === "foto" ? `Foto ${state.photoSlot + 1}` : `${state.shape.name} ${state.slot + 1}`);
+    const dyes = renderUses();
+    if (state.mode === "foto") {
+      if (!state.photo.some((v) => v)) { status("Önce bir fotoğraf seç ya da fırçayla çiz.", true); return; }
+      store.photo = store.photo.filter((p) => p.slot !== state.photoSlot);
+      store.photo.push({ slot: state.photoSlot, name, buf: toB64(state.photo), dyes });
+      status(`"${name}" Foto ${state.photoSlot + 1} yuvasına kaydedildi. Paket sekmesinden indirebilirsin.`);
+    } else {
+      store.cloth = store.cloth.filter((c) => !(c.key === state.shape.key && c.slot === state.slot));
+      store.cloth.push({ key: state.shape.key, cat: state.shape.cat, shape: state.shape.std.shape, slot: state.slot, name, buf: toB64(state.buf), dyes });
+      status(`"${name}" ${state.shape.name} için Yuva ${state.slot + 1}'e kaydedildi. Paket sekmesinden indirebilirsin.`);
+    }
+    saveStore();
+    renderSaved();
+  };
+
+  // ------------------------------------------------------------- paket
+  function thumbCloth(rec) {
+    const c = document.createElement("canvas"); c.width = c.height = 128;
+    const g = garments[rec.key]; const buf = fromB64(rec.buf); const x = c.getContext("2d");
+    for (let i = 0; i < 128 * 128; i++) if (g.mask[i]) { x.fillStyle = hex(buf[i] ? DYES[buf[i] - 1].rgb : BASE); x.fillRect(i % 128, (i / 128) | 0, 1, 1); }
+    return c;
+  }
+  function thumbPhoto(rec) {
+    const c = document.createElement("canvas"); c.width = c.height = 128;
+    const buf = fromB64(rec.buf); const x = c.getContext("2d");
+    for (let i = 0; i < 128 * 128; i++) if (buf[i]) { x.fillStyle = hex(DYES[buf[i] - 1].rgb); x.fillRect(i % 128, (i / 128) | 0, 1, 1); }
+    return c;
+  }
+  function renderSaved() {
+    const box = $("kayitlar"); box.innerHTML = "";
+    const all = [...store.cloth.map((r) => ({ r, kind: "cloth" })), ...store.photo.map((r) => ({ r, kind: "photo" }))];
+    if (!all.length) { box.innerHTML = `<p class="hint">Henüz kayıtlı tasarım yok. "Giysi çizimi" ya da "Foto motifi" bölümünde bir tasarımı yuvaya kaydet.</p>`; return; }
+    for (const { r, kind } of all) {
+      const el = document.createElement("div"); el.className = "item";
+      el.appendChild(kind === "cloth" ? thumbCloth(r) : thumbPhoto(r));
+      const info = document.createElement("div");
+      info.innerHTML = `<b></b><small>${kind === "cloth" ? `${garments[r.key]?.name ?? r.key} · Yuva ${r.slot + 1}` : `Foto ${r.slot + 1}`} · ${r.dyes.length} boya</small>`;
+      info.querySelector("b").textContent = r.name;
+      el.appendChild(info);
+      const del = document.createElement("button"); del.type = "button"; del.className = "btn danger"; del.textContent = "Sil";
+      del.onclick = () => {
+        if (kind === "cloth") store.cloth = store.cloth.filter((x) => x !== r); else store.photo = store.photo.filter((x) => x !== r);
+        saveStore(); renderSaved();
+      };
+      el.appendChild(del);
+      box.appendChild(el);
+    }
+  }
+  function pngBlob(buf, mask, base) {
+    const c = document.createElement("canvas"); c.width = c.height = 128;
+    const x = c.getContext("2d"); const img = x.createImageData(128, 128);
+    for (let i = 0; i < 128 * 128; i++) {
+      if (mask && !mask[i]) continue;
+      const v = buf[i];
+      if (!v && !base) continue;
+      const rgb = v ? DYES[v - 1].rgb : base;
+      img.data[i * 4] = (rgb >> 16) & 255; img.data[i * 4 + 1] = (rgb >> 8) & 255; img.data[i * 4 + 2] = rgb & 255; img.data[i * 4 + 3] = 255;
+    }
+    x.putImageData(img, 0, 0);
+    return new Promise((res) => c.toBlob(res, "image/png"));
+  }
+  $("paketle").onclick = async () => {
+    const out = $("paketDurum");
+    out.classList.remove("err");
+    if (!store.cloth.length && !store.photo.length) { out.textContent = "Pakete girecek kayıtlı tasarım yok."; out.classList.add("err"); return; }
+    const downloads = window.claude && (await window.claude.use("downloads"));
+    if (!downloads) { out.textContent = "Bu görünümde dosya indirilemiyor. Sayfayı claude.ai'de açıp tekrar dene."; out.classList.add("err"); return; }
+    out.textContent = "Paket hazırlanıyor…";
+    store.version += 1; saveStore();
+    const v = [1, 0, store.version];
+    const zip = new JSZip();
+    const rp = zip.folder("GiysiAtolye_RP"), bp = zip.folder("GiysiAtolye_BP");
+    rp.file("manifest.json", JSON.stringify({ format_version: 2, header: { name: "Giysi Atölyesi (kişisel)", description: "Kendi çizimlerin ve fotoğrafların", uuid: store.uuids.rp, version: v, min_engine_version: [1, 26, 0] }, modules: [{ type: "resources", uuid: store.uuids.rpMod, version: v }] }, null, 1));
+    const reg = { kiyafet: [], foto: [] };
+    for (const r of store.cloth) {
+      const std = garments[r.key];
+      if (!std) continue;
+      const buf = fromB64(r.buf);
+      rp.file(`textures/gm/cloth/${r.key}/atolye_${r.slot}.png`, await pngBlob(buf, std.mask, BASE));
+      const slim = garments[r.key + "s"];
+      if (slim) rp.file(`textures/gm/cloth/${r.key}s/atolye_${r.slot}.png`, await pngBlob(mapToVariant(buf, std, slim), slim.mask, BASE));
+      reg.kiyafet.push({ cat: r.cat, shape: r.shape, slot: r.slot, ad: r.name, boyalar: r.dyes });
+    }
+    for (const r of store.photo) {
+      rp.file(`textures/gm/photo/p${r.slot}.png`, await pngBlob(fromB64(r.buf), null, 0));
+      reg.foto.push({ slot: r.slot, ad: r.name, boyalar: r.dyes });
+    }
+    const icon = store.photo[0] ? thumbPhoto(store.photo[0]) : store.cloth[0] ? thumbCloth(store.cloth[0]) : null;
+    if (icon) { const b = await new Promise((res) => icon.toBlob(res, "image/png")); rp.file("pack_icon.png", b); bp.file("pack_icon.png", b); }
+    bp.file("manifest.json", JSON.stringify({
+      format_version: 2,
+      header: { name: "Giysi Atölyesi (kişisel)", description: "Atölye tasarımlarını Giysi Modu'na bildirir", uuid: store.uuids.bp, version: v, min_engine_version: [1, 26, 0] },
+      modules: [{ type: "script", language: "javascript", uuid: store.uuids.bpScript, version: v, entry: "scripts/main.js" }],
+      dependencies: [{ module_name: "@minecraft/server", version: "2.11.0" }, { uuid: store.uuids.rp, version: v }],
+    }, null, 1));
+    bp.file("scripts/main.js", `// Giysi Atölyesi: tasarım adlarını ve boya maliyetlerini Giysi Modu'na bildirir.\nimport { world, system } from "@minecraft/server";\nconst KAYIT = ${JSON.stringify(reg)};\nworld.afterEvents.worldLoad.subscribe(() => {\n  system.runTimeout(() => system.sendScriptEvent("gm:atolye", JSON.stringify(KAYIT)), 40);\n});\n`);
+    try {
+      const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+      await downloads.save({ filename: "GiysiAtolye.zip", data: blob });
+      out.textContent = "İndirildi. Adını GiysiAtolye.mcaddon yapıp aç.";
+    } catch (e) {
+      const code = e && e.code;
+      out.textContent = code === "declined" ? "İndirme iptal edildi." : code === "rate_limited" ? "Önceki indirme penceresi hâlâ açık; biraz sonra tekrar dene." : "Paket indirilemedi: " + ((e && e.message) || "bilinmeyen hata");
+      out.classList.add("err");
+    }
+  };
+
+  // ------------------------------------------------------------- bölümler
+  function setMode(m) {
+    state.mode = m;
+    document.querySelectorAll("[data-mode]").forEach((b) => b.setAttribute("aria-selected", b.dataset.mode === m ? "true" : "false"));
+    $("pGiysi").hidden = m !== "giysi"; $("pFoto").hidden = m !== "foto"; $("pPaket").hidden = m !== "paket"; $("pFirca").hidden = m === "paket";
+    $("gorunumAraclari").hidden = m !== "giysi";
+    if (m === "foto") { setView("flat"); if (state.color === 0) setColor(0); }
+    else if (m === "giysi") setView(state.view === "flat" ? "flat" : "3d");
+    else { setView("flat"); renderSaved(); }
+    state.undo = []; state.redo = [];
+    buildPalette();
+    if (m === "foto") { const rec = store.photo.find((p) => p.slot === state.photoSlot); if (rec) state.photo = fromB64(rec.buf); $("ad").value = rec ? rec.name : ""; drawCrop(); }
+    if (m === "giysi") { const rec = store.cloth.find((c) => c.key === state.shape.key && c.slot === state.slot); $("ad").value = rec ? rec.name : ""; }
+    refresh();
+  }
+  document.querySelectorAll("[data-mode]").forEach((b) => b.onclick = () => setMode(b.dataset.mode));
+
+  decode().then(() => {
+    $("yukleniyor").remove();
+    fillSelects();
+    state.shape = shapesList.find((s) => s.cat === "top") || shapesList[0];
+    $("giysiSec").value = String(shapesList.indexOf(state.shape));
+    buildPalette();
+    buildModel();
+    loadDesign();
+    resize();
+    setView("3d");
+    requestAnimationFrame(frame);
+  }).catch((e) => { $("yukleniyor").textContent = "Atölye yüklenemedi: " + e.message; });
+})();
+</script>

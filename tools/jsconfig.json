@@ -1,0 +1,1 @@
+{ "compilerOptions": { "checkJs": true, "allowJs": true, "noEmit": true, "target": "es2022", "module": "es2022", "moduleResolution": "bundler", "strict": false, "baseUrl": ".", "paths": { "@minecraft/server": ["node_modules/@minecraft/server"], "@minecraft/server-ui": ["node_modules/@minecraft/server-ui"] } }, "include": ["../build/GiysiModu_BP/scripts/*.js"] }

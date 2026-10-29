@@ -1,0 +1,10 @@
+{
+  "name": "giysi-modu",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "test": "node tools/build.mjs && node --import ./tests/mock/loader.mjs --test tests/logic.test.mjs",
+    "check": "cd tools && npx tsc -p jsconfig.json"
+  }
+}
