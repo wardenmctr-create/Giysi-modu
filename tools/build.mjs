@@ -582,12 +582,12 @@ const LANG = { tr_TR: TR, en_US: TR, en_GB: TR };
 for (const [lang, entries] of Object.entries(LANG)) {
   const body = Object.entries(entries).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
   write(RP, `texts/${lang}.lang`, body);
-  write(BP, `texts/${lang}.lang`, `pack.name=Giysi Modu\npack.description=Giysi tasarım addon'u (doğrulama prototipi)\n`);
+  write(BP, `texts/${lang}.lang`, `pack.name=Giysi Modu\npack.description=Giysi tasarım addon'u — ara sürüm 1 (her kategoriden 1 ayrıntılı şekil)\n`);
 }
 write(RP, "texts/languages.json", Object.keys(LANG));
 write(BP, "texts/languages.json", Object.keys(LANG));
 for (const [lang] of Object.entries(LANG)) {
-  fs.appendFileSync(path.join(RP, `texts/${lang}.lang`), `pack.name=Giysi Modu\npack.description=Giysi tasarım addon'u (doğrulama prototipi)\n`);
+  fs.appendFileSync(path.join(RP, `texts/${lang}.lang`), `pack.name=Giysi Modu\npack.description=Giysi tasarım addon'u — ara sürüm 1 (her kategoriden 1 ayrıntılı şekil)\n`);
 }
 
 // ---------------------------------------------------------------- manifestler

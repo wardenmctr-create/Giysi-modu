@@ -336,7 +336,7 @@ async function mainScreen(sess) {
   // Şekil
   const shapes = DATA.SHAPES[sess.cat.id];
   const shapeObs = new ObservableNumber(sess.shape, { clientWritable: true });
-  f.dropdown("Şekil", shapeObs, shapes.map((s, i) => ({ label: s.built >= 0 ? s.name : `§8${s.name} (kapı testinden sonra)`, value: i })), { disabled: !editable });
+  f.dropdown("Şekil", shapeObs, shapes.map((s, i) => ({ label: s.built >= 0 ? s.name : `§8${s.name} (tam sürümde gelecek)`, value: i })), { disabled: !editable });
 
   // Şablon (+ çizim ve Atölye)
   let tplList = templateChoices(sess);
